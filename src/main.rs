@@ -4,7 +4,7 @@ use std::io::{Read, Write};
 use std::sync::Arc;
 use std::thread;
 
-fn handle_client(mut stream: SslStream<TcpStream>) {
+fn handle_client(mut stream: &SslStream<TcpStream>, mut streams: Vec<SslStream<TcpStream>>) {
     let mut data = [0 as u8; 50];
     while match stream.read(&mut data) {
         Ok(size) => {
@@ -26,17 +26,24 @@ fn main() {
     acceptor.set_certificate_chain_file("cert.pem").unwrap();
     acceptor.check_private_key().unwrap();
     let acceptor = Arc::new(acceptor.build());
+
+    let mut streams: Vec<SslStream<TcpStream>> = vec![];
     
     let listener = TcpListener::bind("0.0.0.0:42069").unwrap(); //todo handle error
     println!("Server started on port 42069");
+
     for stream in listener.incoming() {
+
         match stream {
             Ok(stream) => {
                 println!("New connection: {}", stream.peer_addr().unwrap());
                 let acceptor = acceptor.clone();
-                thread::spawn(move|| {
-                    let stream = acceptor.accept(stream).unwrap();
-                    handle_client(stream)
+                let stream = acceptor.accept(stream).unwrap();
+                let e = move || {
+                	streams.push(stream);
+                };
+                thread::spawn(move||{
+                    handle_client(&mut streams.last_mut().unwrap(), streams)
                 });
             }
             Err(e) => {
