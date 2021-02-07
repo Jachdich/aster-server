@@ -1,55 +1,141 @@
-use openssl::ssl::{SslMethod, SslAcceptor, SslStream, SslFiletype};
-use std::net::{TcpListener, TcpStream, Shutdown};
-use std::io::{Read, Write};
-use std::sync::Arc;
-use std::thread;
+extern crate tokio;
 
-fn handle_client(mut stream: &SslStream<TcpStream>, mut streams: Vec<SslStream<TcpStream>>) {
-    let mut data = [0 as u8; 50];
-    while match stream.read(&mut data) {
-        Ok(size) => {
-            stream.write(&data[0..size]).unwrap();
-            true
-        },
-        Err(_) => {
-            println!("Error with connection");
-            //stream.shutdown(Shutdown::Both).unwrap();
-            //todo handle & disconnect
-            false
-        }
-    } {}
+use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::{mpsc, Mutex};
+use tokio_stream::{Stream, StreamExt};
+use tokio_util::codec::{Framed, LinesCodec, LinesCodecError};
+
+use futures::SinkExt;
+use std::collections::HashMap;
+use std::error::Error;
+use std::io;
+use std::net::SocketAddr;
+use std::pin::Pin;
+use std::sync::Arc;
+use std::task::{Context, Poll};
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn Error>> {
+
+    let state = Arc::new(Mutex::new(Shared::new()));
+    let addr = "127.0.0.1:2345".to_string();
+    
+    let listener = TcpListener::bind(&addr).await?;
+
+    loop {
+        let (stream, addr) = listener.accept().await?;
+
+        let state = Arc::clone(&state);
+
+        tokio::spawn(async move {
+            if let Err(e) = process(state, stream, addr).await {
+                println!("An error occurred: {:?}", e);
+            }
+        });
+    }
 }
 
-fn main() {
-    let mut acceptor = SslAcceptor::mozilla_intermediate(SslMethod::tls()).unwrap();
-    acceptor.set_private_key_file("key.pem", SslFiletype::PEM).unwrap();
-    acceptor.set_certificate_chain_file("cert.pem").unwrap();
-    acceptor.check_private_key().unwrap();
-    let acceptor = Arc::new(acceptor.build());
+type Tx = mpsc::UnboundedSender<String>;
 
-    let mut streams: Vec<SslStream<TcpStream>> = vec![];
-    
-    let listener = TcpListener::bind("0.0.0.0:42069").unwrap(); //todo handle error
-    println!("Server started on port 42069");
+struct Shared {
+    peers: HashMap<SocketAddr, Tx>,
+}
 
-    for stream in listener.incoming() {
+struct Peer {
+    lines: Framed<TcpStream, LinesCodec>,
+    rx: Pin<Box<dyn Stream<Item = String> + Send>>, //TODO this is not what we want to do!
+}
 
-        match stream {
-            Ok(stream) => {
-                println!("New connection: {}", stream.peer_addr().unwrap());
-                let acceptor = acceptor.clone();
-                let stream = acceptor.accept(stream).unwrap();
-                let e = move || {
-                	streams.push(stream);
-                };
-                thread::spawn(move||{
-                    handle_client(&mut streams.last_mut().unwrap(), streams)
-                });
-            }
-            Err(e) => {
-                println!("Error: {}", e);
+impl Shared {
+    fn new() -> Self {
+        Shared {
+            peers: HashMap::new(),
+        }
+    }
+
+    async fn broadcast(&mut self, sender: SocketAddr, message: &str) {
+        for peer in self.peers.iter_mut() {
+            if *peer.0 != sender {
+                let _ = peer.1.send(message.into());
             }
         }
     }
-    drop(listener);
+}
+
+impl Peer {
+    async fn new(state: Arc<Mutex<Shared>>, lines: Framed<TcpStream, LinesCodec>
+    ) -> io::Result<Peer> {
+        let addr = lines.get_ref().peer_addr()?;
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        state.lock().await.peers.insert(addr, tx);
+
+        let rx = Box::pin(async_stream::stream! {
+            while let Some(item) = rx.recv().await {
+                yield item;
+            }
+        });
+
+        Ok(Peer {lines, rx})
+    }
+}
+
+enum Message {
+    Broadcast(String),
+    Received(String),
+}
+
+impl Stream for Peer {
+    type Item = Result<Message, LinesCodecError>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+
+        if let Poll::Ready(Some(v)) = Pin::new(&mut self.rx).poll_next(cx) {
+            return Poll::Ready(Some(Ok(Message::Received(v))));
+        }
+
+        let result: Option<_> = futures::ready!(Pin::new(&mut self.lines).poll_next(cx));
+
+        Poll::Ready(match result {
+            Some(Ok(message)) => Some(Ok(Message::Broadcast(message))),
+            Some(Err(e)) => Some(Err(e)),
+            None => None,
+        })
+    }
+}
+
+async fn process(state: Arc<Mutex<Shared>>, stream: TcpStream, addr: SocketAddr) -> Result<(), Box<dyn Error>> {
+    let mut lines = Framed::new(stream, LinesCodec::new());
+
+    let mut peer = Peer::new(state.clone(), lines).await?;
+
+    let mut uname = format!("{}", addr);
+
+    while let Some(result) = peer.next().await {
+        match result {
+            Ok(Message::Broadcast(msg)) => {
+                let mut state = state.lock().await;
+                if msg.chars().nth(0).unwrap() == '/' {
+                    let mut split = msg.split(" ");
+                    let argv = split.collect::<Vec<&str>>();
+                    match argv[0] {
+                        "/nick" => {
+                            uname = argv[1].to_string();
+                        }
+                        _ => ()
+                    }
+                } else {
+                    let msg = format!("{}: {}", uname, msg);
+                    state.broadcast(addr, &msg).await;
+                }
+            }
+
+            Ok(Message::Received(msg)) => {
+                peer.lines.send(&msg).await?;
+            }
+
+            Err(e) => { println!("Error lmao u figure it out"); }
+        }
+    }
+
+    Ok(())
 }
