@@ -39,6 +39,7 @@ type Tx = mpsc::UnboundedSender<String>;
 
 struct Shared {
     peers: HashMap<SocketAddr, Tx>,
+    online: Vec<String>,
 }
 
 struct Peer {
@@ -50,6 +51,7 @@ impl Shared {
     fn new() -> Self {
         Shared {
             peers: HashMap::new(),
+            online: Vec::new(),
         }
     }
 
@@ -109,6 +111,11 @@ async fn process(state: Arc<Mutex<Shared>>, stream: TcpStream, addr: SocketAddr)
     let mut peer = Peer::new(state.clone(), lines).await?;
 
     let mut uname = format!("{}", addr);
+    
+    {
+        let mut state = state.lock().await;
+        state.online.push(uname.clone());
+    }
 
     while let Some(result) = peer.next().await {
         match result {
@@ -119,7 +126,19 @@ async fn process(state: Arc<Mutex<Shared>>, stream: TcpStream, addr: SocketAddr)
                     let argv = split.collect::<Vec<&str>>();
                     match argv[0] {
                         "/nick" => {
+                            let index = state.online.iter().position(|x| *x == uname).unwrap();
+                            state.online.remove(index);
                             uname = argv[1].to_string();
+                            state.online.push(uname.clone());
+                        }
+
+                        "/list" => {
+                            let mut res = "".to_string();
+                            for user in state.online.iter() {
+                                res.push_str(user);
+                                res.push_str(&", ");
+                            }
+                            peer.lines.send(&res).await?;
                         }
                         _ => ()
                     }
