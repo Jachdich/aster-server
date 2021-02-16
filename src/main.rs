@@ -18,7 +18,7 @@ use std::task::{Context, Poll};
 async fn main() -> Result<(), Box<dyn Error>> {
 
     let state = Arc::new(Mutex::new(Shared::new()));
-    let addr = "127.0.0.1:2345".to_string();
+    let addr = "0.0.0.0:2345".to_string();
     
     let listener = TcpListener::bind(&addr).await?;
 
@@ -39,11 +39,12 @@ type Tx = mpsc::UnboundedSender<String>;
 
 struct SharedChannel {
     peers: HashMap<SocketAddr, Tx>,
-    online: Vec<String>,
+    history: Vec<String>,
 }
 
 struct Shared {
     channels: HashMap<String, SharedChannel>,
+    online: Vec<String>,
 }
 
 struct Peer {
@@ -59,8 +60,8 @@ impl Shared {
         channels.insert("#general".to_string(), SharedChannel::new());
         channels.insert("#memes".to_string(), SharedChannel::new());
         Shared {
-            //channels: [("#general", SharedChannel::new()), ("#other", SharedChannel::new())].iter().cloned().collect()
-            channels
+            channels,
+            online: Vec::new(),
         }
     }
 }
@@ -69,11 +70,12 @@ impl SharedChannel {
     fn new() -> Self {
         SharedChannel {
             peers: HashMap::new(),
-            online: Vec::new(),
+            history: Vec::new(),
         }
     }
 
     async fn broadcast(&mut self, sender: SocketAddr, message: &str) {
+        self.history.push(message.to_string());
         for peer in self.peers.iter_mut() {
             if *peer.0 != sender {
                 let _ = peer.1.send(message.into());
@@ -142,37 +144,57 @@ async fn process(state: Arc<Mutex<Shared>>, stream: TcpStream, addr: SocketAddr)
     let mut uname = format!("{}", addr);
     
     {
-        //let mut state = state.lock().await;
-        //state.online.push(uname.clone());
+        let mut state = state.lock().await;
+        state.online.push(uname.clone());
     }
 
     while let Some(result) = peer.next().await {
         match result {
             Ok(Message::Broadcast(msg)) => {
                 let mut state_lock = state.lock().await;
+                if msg.len() == 0 {
+                    continue;
+                }
                 if msg.chars().nth(0).unwrap() == '/' {
                     let split = msg.split(" ");
                     let argv = split.collect::<Vec<&str>>();
                     match argv[0] {
                         "/nick" => {
-                            //let index = state.online.iter().position(|x| *x == uname).unwrap();
-                            //state.online.remove(index);
+                            let index = state_lock.online.iter().position(|x| *x == uname).unwrap();
+                            state_lock.online.remove(index);
                             uname = argv[1].to_string();
-                            //state.online.push(uname.clone());
+                            state_lock.online.push(uname.clone());
                         }
-/*
+                        
                         "/list" => {
                             let mut res = "".to_string();
-                            for user in state.online.iter() {
+                            for user in state_lock.online.iter() {
                                 res.push_str(user);
                                 res.push_str(&", ");
                             }
                             peer.lines.send(&res).await?;
-                        }*/
+                        }
 
                         "/join" => {
                             channel = argv[1].to_string();
                             peer.channel(&channel, &mut state_lock);
+                        }
+
+                        "/history" => {
+                            let history = &state_lock.channels.get(&channel).unwrap().history;
+                            let mut a = argv[1].parse::<usize>().unwrap();
+                            let mut b = argv[2].parse::<usize>().unwrap();
+                            if a > history.len() { a = history.len(); }
+                            if b > history.len() { b = history.len(); }
+
+                            for msg in history[history.len() - b..history.len() - a].iter() {
+                                peer.lines.send(msg).await?;
+                            }
+                            
+                        }
+
+                        "/leave" => {
+                            return Ok(());
                         }
                         _ => ()
                     }
@@ -186,7 +208,7 @@ async fn process(state: Arc<Mutex<Shared>>, stream: TcpStream, addr: SocketAddr)
                 peer.lines.send(&msg).await?;
             }
 
-            Err(e) => { println!("Error lmao u figure it out"); }
+            Err(e) => { println!("Error lmao u figure it out: {}", e); }
         }
     }
 
