@@ -37,19 +37,37 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
 type Tx = mpsc::UnboundedSender<String>;
 
-struct Shared {
+struct SharedChannel {
     peers: HashMap<SocketAddr, Tx>,
     online: Vec<String>,
+}
+
+struct Shared {
+    channels: HashMap<String, SharedChannel>,
 }
 
 struct Peer {
     lines: Framed<TcpStream, LinesCodec>,
     rx: Pin<Box<dyn Stream<Item = String> + Send>>, //TODO this is not what we want to do!
+    channel: String,
+    addr: SocketAddr,
 }
 
 impl Shared {
     fn new() -> Self {
+        let mut channels: HashMap<String, SharedChannel> = HashMap::new();
+        channels.insert("#general".to_string(), SharedChannel::new());
+        channels.insert("#memes".to_string(), SharedChannel::new());
         Shared {
+            //channels: [("#general", SharedChannel::new()), ("#other", SharedChannel::new())].iter().cloned().collect()
+            channels
+        }
+    }
+}
+
+impl SharedChannel {
+    fn new() -> Self {
+        SharedChannel {
             peers: HashMap::new(),
             online: Vec::new(),
         }
@@ -65,11 +83,11 @@ impl Shared {
 }
 
 impl Peer {
-    async fn new(state: Arc<Mutex<Shared>>, lines: Framed<TcpStream, LinesCodec>
+    async fn new(state: Arc<Mutex<Shared>>, lines: Framed<TcpStream, LinesCodec>, channel: &String
     ) -> io::Result<Peer> {
         let addr = lines.get_ref().peer_addr()?;
         let (tx, mut rx) = mpsc::unbounded_channel();
-        state.lock().await.peers.insert(addr, tx);
+        state.lock().await.channels.get_mut(channel).unwrap().peers.insert(addr, tx);
 
         let rx = Box::pin(async_stream::stream! {
             while let Some(item) = rx.recv().await {
@@ -77,7 +95,17 @@ impl Peer {
             }
         });
 
-        Ok(Peer {lines, rx})
+        let channel = channel.to_owned();
+        Ok(Peer {lines, rx, channel, addr})
+    }
+
+    fn channel(&mut self, new_channel: &String, state: &mut tokio::sync::MutexGuard<'_, Shared>) {
+        //let channels = &mut ;
+        //let addr = self.lines.get_ref().peer_addr().unwrap();
+        let tx = state.channels.get_mut(&self.channel).unwrap().peers.get(&self.addr).unwrap().clone();
+        state.channels.get_mut(&self.channel).unwrap().peers.remove(&self.addr);
+        state.channels.get_mut(new_channel).unwrap().peers.insert(self.addr, tx);
+        self.channel = new_channel.to_owned();
     }
 }
 
@@ -106,32 +134,33 @@ impl Stream for Peer {
 }
 
 async fn process(state: Arc<Mutex<Shared>>, stream: TcpStream, addr: SocketAddr) -> Result<(), Box<dyn Error>> {
-    let mut lines = Framed::new(stream, LinesCodec::new());
+    let mut channel = "#general".to_string();
 
-    let mut peer = Peer::new(state.clone(), lines).await?;
+    let lines = Framed::new(stream, LinesCodec::new());
+    let mut peer = Peer::new(state.clone(), lines, &channel).await?;
 
     let mut uname = format!("{}", addr);
     
     {
-        let mut state = state.lock().await;
-        state.online.push(uname.clone());
+        //let mut state = state.lock().await;
+        //state.online.push(uname.clone());
     }
 
     while let Some(result) = peer.next().await {
         match result {
             Ok(Message::Broadcast(msg)) => {
-                let mut state = state.lock().await;
+                let mut state_lock = state.lock().await;
                 if msg.chars().nth(0).unwrap() == '/' {
-                    let mut split = msg.split(" ");
+                    let split = msg.split(" ");
                     let argv = split.collect::<Vec<&str>>();
                     match argv[0] {
                         "/nick" => {
-                            let index = state.online.iter().position(|x| *x == uname).unwrap();
-                            state.online.remove(index);
+                            //let index = state.online.iter().position(|x| *x == uname).unwrap();
+                            //state.online.remove(index);
                             uname = argv[1].to_string();
-                            state.online.push(uname.clone());
+                            //state.online.push(uname.clone());
                         }
-
+/*
                         "/list" => {
                             let mut res = "".to_string();
                             for user in state.online.iter() {
@@ -139,12 +168,17 @@ async fn process(state: Arc<Mutex<Shared>>, stream: TcpStream, addr: SocketAddr)
                                 res.push_str(&", ");
                             }
                             peer.lines.send(&res).await?;
+                        }*/
+
+                        "/join" => {
+                            channel = argv[1].to_string();
+                            peer.channel(&channel, &mut state_lock);
                         }
                         _ => ()
                     }
                 } else {
                     let msg = format!("{}: {}", uname, msg);
-                    state.broadcast(addr, &msg).await;
+                    state_lock.channels.get_mut(&channel).unwrap().broadcast(addr, &msg).await;
                 }
             }
 
