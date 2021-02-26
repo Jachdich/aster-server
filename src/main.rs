@@ -52,9 +52,22 @@ struct User {
     name: String,
 }
 
+#[derive(Clone)]
 struct MessageType {
     content: String,
     user: User,
+}
+
+impl MessageType {
+    fn as_json(&self) -> json::JsonValue {
+        return json::object!{content: self.content.clone(), user: self.user.as_json()};
+    }
+}
+
+impl User {
+    fn as_json(&self) -> json::JsonValue {
+        return json::object!{name: self.name.clone()};
+    }
 }
 
 struct SharedChannel {
@@ -181,8 +194,7 @@ async fn process_command(msg: &String, state: Arc<Mutex<Shared>>, peer: &mut Pee
                 res.push(user.to_owned());
             }
             let final_json = json::object!{
-                message: res.dump(),
-                username: "server"
+                res: res,
             };
             peer.lines.send(&final_json.dump()).await;
         }
@@ -190,7 +202,6 @@ async fn process_command(msg: &String, state: Arc<Mutex<Shared>>, peer: &mut Pee
         "/join" => {
             if argv.len() < 2 {
                 peer.lines.send("Usage: /join <[#]channel>").await;
-
             }
             peer.channel(&argv[1].to_string(), &mut state_lock);
         }
@@ -206,9 +217,11 @@ async fn process_command(msg: &String, state: Arc<Mutex<Shared>>, peer: &mut Pee
 
             for msg in history[history.len() - b..history.len() - a].iter() {
                 //peer.lines.send(msg).await;
-                //res.push(msg.to_owne)
+                res.push(msg.as_json());
             }
-            
+            let json_obj = json::object!{res: res};
+            peer.lines.send(&json_obj.dump()).await;
+
         }
 
         
