@@ -47,9 +47,19 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
 type Tx = mpsc::UnboundedSender<String>;
 
+#[derive(Clone)]
+struct User {
+    name: String,
+}
+
+struct MessageType {
+    content: String,
+    user: User,
+}
+
 struct SharedChannel {
     peers: HashMap<SocketAddr, Tx>,
-    history: Vec<String>,
+    history: Vec<MessageType>,
 }
 
 struct Shared {
@@ -61,7 +71,7 @@ struct Peer {
     lines: Framed<TlsStream<TcpStream>, LinesCodec>,
     rx: Pin<Box<dyn Stream<Item = String> + Send>>, //TODO this is not what we want to do!
     channel: String,
-    uname: String,
+    user: User,
     addr: SocketAddr,
 }
 
@@ -85,11 +95,13 @@ impl SharedChannel {
         }
     }
 
-    async fn broadcast(&mut self, sender: SocketAddr, message: &str) {
-        self.history.push(message.to_string());
+    async fn broadcast(&mut self, sender: SocketAddr, message: MessageType) {
+        let msg = json::object!{username: message.user.name.clone(), message: message.content.clone()};
+        let msg_string = msg.dump();
+        self.history.push(message);
         for peer in self.peers.iter_mut() {
             if *peer.0 != sender {
-                let _ = peer.1.send(message.into());
+                let _ = peer.1.send(msg_string.clone());
             }
         }
     }
@@ -109,8 +121,8 @@ impl Peer {
         });
 
         let channel = channel.to_owned();
-        let uname = uname.to_owned();
-        Ok(Peer {lines, rx, channel, uname, addr})
+        let user = User{name: uname.to_owned()};
+        Ok(Peer {lines, rx, channel, user, addr})
     }
 
     fn channel(&mut self, new_channel: &String, state: &mut tokio::sync::MutexGuard<'_, Shared>) {
@@ -124,8 +136,8 @@ impl Peer {
 }
 
 enum Message {
-    Broadcast(String),
-    Received(String),
+    Broadcast(MessageType),
+    Received(MessageType),
 }
 
 impl Stream for Peer {
@@ -134,13 +146,13 @@ impl Stream for Peer {
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
 
         if let Poll::Ready(Some(v)) = Pin::new(&mut self.rx).poll_next(cx) {
-            return Poll::Ready(Some(Ok(Message::Received(v))));
+            return Poll::Ready(Some(Ok(Message::Received(MessageType{content: v, user: self.user.clone()}))));
         }
 
         let result: Option<_> = futures::ready!(Pin::new(&mut self.lines).poll_next(cx));
 
         Poll::Ready(match result {
-            Some(Ok(message)) => Some(Ok(Message::Broadcast(message))),
+            Some(Ok(message)) => Some(Ok(Message::Broadcast(MessageType{content: message, user: self.user.clone()}))),
             Some(Err(e)) => Some(Err(e)),
             None => None,
         })
@@ -156,10 +168,10 @@ async fn process_command(msg: &String, state: Arc<Mutex<Shared>>, peer: &mut Pee
             if argv.len() < 2 {
                 peer.lines.send("Usage: /nick <nickname>").await;
             } else {
-                let index = state_lock.online.iter().position(|x| *x == peer.uname).unwrap();
+                let index = state_lock.online.iter().position(|x| *x == peer.user.name).unwrap();
                 state_lock.online.remove(index);
-                peer.uname = argv[1].to_string();
-                state_lock.online.push(peer.uname.clone());
+                peer.user.name = argv[1].to_string();
+                state_lock.online.push(peer.user.name.clone());
             }
         }
         
@@ -190,8 +202,11 @@ async fn process_command(msg: &String, state: Arc<Mutex<Shared>>, peer: &mut Pee
             if a > history.len() { a = history.len(); }
             if b > history.len() { b = history.len(); }
 
+            let mut res = json::JsonValue::new_array();
+
             for msg in history[history.len() - b..history.len() - a].iter() {
-                peer.lines.send(msg).await;
+                //peer.lines.send(msg).await;
+                //res.push(msg.to_owne)
             }
             
         }
@@ -225,21 +240,21 @@ async fn process(state: Arc<Mutex<Shared>>, stream: TlsStream<TcpStream>, addr: 
     while let Some(result) = peer.next().await {
         match result {
             Ok(Message::Broadcast(msg)) => {
-                if msg.len() == 0 {
+                if msg.content.len() == 0 {
                     continue;
                 }
-                if msg.chars().nth(0).unwrap() == '/' {
-                    process_command(&msg, state.clone(), &mut peer).await;
+                if msg.content.chars().nth(0).unwrap() == '/' {
+                    process_command(&msg.content, state.clone(), &mut peer).await;
                 } else {
-                    let msg = json::object!{username: peer.uname.clone(), message: msg};
-                    let msg_string = msg.dump();
                     let mut state_lock = state.lock().await;
-                    state_lock.channels.get_mut(&channel).unwrap().broadcast(addr, &msg_string).await;
+                    state_lock.channels.get_mut(&channel).unwrap().broadcast(addr, msg).await;
                 }
             }
 
             Ok(Message::Received(msg)) => {
-                peer.lines.send(&msg).await?;
+                let msg = json::object!{username: msg.user.name.clone(), message: msg.content.clone()};
+                let msg_string = msg.dump();
+                peer.lines.send(&msg_string).await?;
             }
 
             Err(e) => { println!("Error lmao u figure it out: {}", e); }
