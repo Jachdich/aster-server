@@ -164,17 +164,20 @@ async fn process_command(msg: &String, state: Arc<Mutex<Shared>>, peer: &mut Pee
         }
         
         "/list" => {
-            let mut res = "".to_string();
+            let mut res = json::JsonValue::new_array();
             for user in state_lock.online.iter() {
-                res.push_str(user);
-                res.push_str(&", ");
+                res.push(user.to_owned());
             }
-            peer.lines.send(&res).await;
+            let final_json = json::object!{
+                message: res.dump(),
+                username: "server"
+            };
+            peer.lines.send(&final_json.dump()).await;
         }
 
         "/join" => {
             if argv.len() < 2 {
-                peer.lines.send("Usage: /nick <nickname>").await;
+                peer.lines.send("Usage: /join <[#]channel>").await;
 
             }
             peer.channel(&argv[1].to_string(), &mut state_lock);
@@ -192,6 +195,8 @@ async fn process_command(msg: &String, state: Arc<Mutex<Shared>>, peer: &mut Pee
             }
             
         }
+
+        
 
         //"/createchannel" => {
         //    
@@ -216,8 +221,6 @@ async fn process(state: Arc<Mutex<Shared>>, stream: TlsStream<TcpStream>, addr: 
 
     let lines = Framed::new(stream, LinesCodec::new());
     let mut peer = Peer::new(state.clone(), lines, &channel, &uname).await?;
-
-    peer.lines.send("testing\n").await;
     
     while let Some(result) = peer.next().await {
         match result {
@@ -228,9 +231,10 @@ async fn process(state: Arc<Mutex<Shared>>, stream: TlsStream<TcpStream>, addr: 
                 if msg.chars().nth(0).unwrap() == '/' {
                     process_command(&msg, state.clone(), &mut peer).await;
                 } else {
-                    let msg = format!("{}: {}", peer.uname, msg);
+                    let msg = json::object!{username: peer.uname.clone(), message: msg};
+                    let msg_string = msg.dump();
                     let mut state_lock = state.lock().await;
-                    state_lock.channels.get_mut(&channel).unwrap().broadcast(addr, &msg).await;
+                    state_lock.channels.get_mut(&channel).unwrap().broadcast(addr, &msg_string).await;
                 }
             }
 
