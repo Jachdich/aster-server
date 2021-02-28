@@ -15,17 +15,67 @@ use std::net::SocketAddr;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
+use std::io::Write;
 
-fn write_channel(fname: &str, channel: SharedChannel) -> std::io::Result<()> {
-    let mut f = File::create(fname)?;
-    f.write_all(b"Hello, world!")?;
+fn write_channel(fname: &str, channel: &SharedChannel) -> std::io::Result<()> {
+    let mut f = std::fs::File::create(fname)?;
+    f.write_all(channel.as_json().dump().as_bytes())?;
     f.sync_all()?;
     Ok(())
 }
 
-fn save(state: Arc<Mutex<Shared>>) {
+fn save(state: Arc<Mutex<Shared>>) -> std::io::Result<()> {
+    let mut channels = json::JsonValue::new_array();
     for (name, channel) in &futures::executor::block_on(state.lock()).channels {
-        
+        write_channel(&format!("{}.json", name), &channel)?;
+        channels.push(name.to_owned()).unwrap();
+    }
+    let mut f = std::fs::File::create("channels.json")?;
+    f.write_all(channels.dump().as_bytes())?;
+    f.sync_all()?;
+    Ok(())
+}
+
+fn load(channels: &mut HashMap<String, SharedChannel>) {
+    match std::fs::read_to_string("channels.json") {
+        Ok(content) => {
+            match json::parse(&content) {
+                Ok(chan_list) => {
+                    //load the channels
+                    for n in chan_list.members() {
+                        if n.is_string() {
+                            //load it
+                            match std::fs::read_to_string("channels.json") {
+                                Ok(chan_content) => {
+                                    match json::parse(&chan_content) {
+                                        Ok(chan_content) => {
+                                            channels.insert(n.to_string(), SharedChannel::from_json(chan_content));
+                                        }
+                                        Err(_e) => {
+                                            channels.insert(n.to_string(), SharedChannel::new());
+                                        }
+                                    }
+                                }
+                                Err(_e) => {
+                                    channels.insert(n.to_string(), SharedChannel::new());
+                                }
+                            }
+                        }
+                        //else, value is not a string
+                        //ignore it for now
+                    }
+                }
+                Err(_e) => {
+                    //default channels
+                    channels.insert("#general".to_string(), SharedChannel::new());
+                }
+            }
+        }
+
+        Err(_e) => {
+            //default channels
+            channels.insert("#general".to_string(), SharedChannel::new());
+        }
     }
 }
 
@@ -33,6 +83,7 @@ fn save(state: Arc<Mutex<Shared>>) {
 async fn main() -> Result<(), Box<dyn Error>> {
 
     let state = Arc::new(Mutex::new(Shared::new()));
+    save(state.clone()).unwrap();
     let addr = "0.0.0.0:2345".to_string();
     
     let listener = TcpListener::bind(&addr).await?;
@@ -47,9 +98,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let handler_state = state.clone();
 
     ctrlc::set_handler(move || {
-        save(handler_state.clone());
+        save(handler_state.clone()).unwrap();
         std::process::exit(0); 
-    });
+    })?;
 
     loop {
         let (stream, addr) = listener.accept().await?;
@@ -58,7 +109,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         let state = Arc::clone(&state);
 
         tokio::spawn(async move {
-            let mut tls_stream = tls_acceptor.accept(stream).await.expect("Accept error");
+            let tls_stream = tls_acceptor.accept(stream).await.expect("Accept error");
             if let Err(e) = process(state, tls_stream, addr).await {
                 println!("An error occurred: {:?}", e);
             }
@@ -113,8 +164,9 @@ struct Peer {
 impl Shared {
     fn new() -> Self {
         let mut channels: HashMap<String, SharedChannel> = HashMap::new();
-        channels.insert("#general".to_string(), SharedChannel::new());
-        channels.insert("#memes".to_string(), SharedChannel::new());
+        //channels.insert("#general".to_string(), SharedChannel::new());
+        //channels.insert("#memes".to_string(), SharedChannel::new());
+        load(&mut channels);
         Shared {
             channels,
             online: Vec::new(),
@@ -130,6 +182,15 @@ impl SharedChannel {
         }
     }
 
+    fn from_json(value: json::JsonValue) -> Self {
+        let mut history: Vec<String>;
+        //phuck
+        SharedChannel {
+            peers: HashMap::new(),
+            history: history,
+        }
+    }
+
     async fn broadcast(&mut self, sender: SocketAddr, message: MessageType) {
         let msg = json::object!{username: message.user.name.clone(), message: message.content.clone()};
         let msg_string = msg.dump();
@@ -141,18 +202,19 @@ impl SharedChannel {
         }
     }
 
-    fn as_json(&self) {
-        let arr = json::JsonValue::new_array();
+    fn as_json(&self) -> json::JsonValue {
+        let mut arr = json::JsonValue::new_array();
         for msg in self.history.iter() {
-            arr.push(msg.)
+            arr.push(msg.as_json()).unwrap();
         }
+        return arr;
     }
 }
 
 impl Peer {
-    async fn new(state: Arc<Mutex<Shared>>, lines: Framed<TlsStream<TcpStream>, LinesCodec>, channel: &String, uname: &String
+    async fn new(state: Arc<Mutex<Shared>>, lines: Framed<TlsStream<TcpStream>, LinesCodec>, channel: &String, uname: &String, addr: SocketAddr
     ) -> io::Result<Peer> {
-        let addr = lines.get_ref().get_ref().get_ref().get_ref().peer_addr()?;
+        //let addr = lines.get_ref().get_ref().get_ref().get_ref().peer_addr()?;
         let (tx, mut rx) = mpsc::unbounded_channel();
         state.lock().await.channels.get_mut(channel).unwrap().peers.insert(addr, tx);
 
@@ -170,6 +232,7 @@ impl Peer {
     fn channel(&mut self, new_channel: &String, state: &mut tokio::sync::MutexGuard<'_, Shared>) {
         //let channels = &mut ;
         //let addr = self.lines.get_ref().peer_addr().unwrap();
+        println!("{:?}", self.addr);
         let tx = state.channels.get_mut(&self.channel).unwrap().peers.get(&self.addr).unwrap().clone();
         state.channels.get_mut(&self.channel).unwrap().peers.remove(&self.addr);
         state.channels.get_mut(new_channel).unwrap().peers.insert(self.addr, tx);
@@ -201,14 +264,14 @@ impl Stream for Peer {
     }
 }
 
-async fn process_command(msg: &String, state: Arc<Mutex<Shared>>, peer: &mut Peer) {
+async fn process_command(msg: &String, state: Arc<Mutex<Shared>>, peer: &mut Peer) -> Result<(), Box<dyn Error>> {
     let split = msg.split(" ");
     let argv = split.collect::<Vec<&str>>();
     let mut state_lock = state.lock().await;
     match argv[0] {
         "/nick" => {
             if argv.len() < 2 {
-                peer.lines.send("Usage: /nick <nickname>").await;
+                peer.lines.send("Usage: /nick <nickname>").await?;
             } else {
                 let index = state_lock.online.iter().position(|x| *x == peer.user.name).unwrap();
                 state_lock.online.remove(index);
@@ -220,17 +283,17 @@ async fn process_command(msg: &String, state: Arc<Mutex<Shared>>, peer: &mut Pee
         "/list" => {
             let mut res = json::JsonValue::new_array();
             for user in state_lock.online.iter() {
-                res.push(user.to_owned());
+                res.push(user.to_owned()).unwrap();
             }
             let final_json = json::object!{
                 res: res,
             };
-            peer.lines.send(&final_json.dump()).await;
+            peer.lines.send(&final_json.dump()).await?;
         }
 
         "/join" => {
             if argv.len() < 2 {
-                peer.lines.send("Usage: /join <[#]channel>").await;
+                peer.lines.send("Usage: /join <[#]channel>").await?;
             }
             peer.channel(&argv[1].to_string(), &mut state_lock);
         }
@@ -246,10 +309,10 @@ async fn process_command(msg: &String, state: Arc<Mutex<Shared>>, peer: &mut Pee
 
             for msg in history[history.len() - b..history.len() - a].iter() {
                 //peer.lines.send(msg).await;
-                res.push(msg.as_json());
+                res.push(msg.as_json()).unwrap();
             }
             let json_obj = json::object!{res: res};
-            peer.lines.send(&json_obj.dump()).await;
+            peer.lines.send(&json_obj.dump()).await?;
 
         }
 
@@ -261,23 +324,24 @@ async fn process_command(msg: &String, state: Arc<Mutex<Shared>>, peer: &mut Pee
         //}
 
         "/leave" => {
-            return;
+            ()
         }
         _ => ()
     }
+    Ok(())
 }
 
 async fn process(state: Arc<Mutex<Shared>>, stream: TlsStream<TcpStream>, addr: SocketAddr) -> Result<(), Box<dyn Error>> {
-    let mut channel = "#general".to_string();
+    let channel = "#general".to_string();
 
-    let mut uname = format!("{}", addr);
+    let uname = format!("{}", addr);
     {
         let mut state = state.lock().await;
         state.online.push(uname.clone());
     }
 
     let lines = Framed::new(stream, LinesCodec::new());
-    let mut peer = Peer::new(state.clone(), lines, &channel, &uname).await?;
+    let mut peer = Peer::new(state.clone(), lines, &channel, &uname, addr).await?;
     
     while let Some(result) = peer.next().await {
         match result {
@@ -286,10 +350,10 @@ async fn process(state: Arc<Mutex<Shared>>, stream: TlsStream<TcpStream>, addr: 
                     continue;
                 }
                 if msg.content.chars().nth(0).unwrap() == '/' {
-                    process_command(&msg.content, state.clone(), &mut peer).await;
+                    process_command(&msg.content, state.clone(), &mut peer).await?;
                 } else {
                     let mut state_lock = state.lock().await;
-                    state_lock.channels.get_mut(&channel).unwrap().broadcast(addr, msg).await;
+                    state_lock.channels.get_mut(&peer.channel).unwrap().broadcast(addr, msg).await;
                 }
             }
 
