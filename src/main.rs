@@ -1,4 +1,5 @@
 extern crate tokio;
+extern crate ctrlc;
 
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{mpsc, Mutex};
@@ -15,6 +16,19 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 
+fn write_channel(fname: &str, channel: SharedChannel) -> std::io::Result<()> {
+    let mut f = File::create(fname)?;
+    f.write_all(b"Hello, world!")?;
+    f.sync_all()?;
+    Ok(())
+}
+
+fn save(state: Arc<Mutex<Shared>>) {
+    for (name, channel) in &futures::executor::block_on(state.lock()).channels {
+        
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
 
@@ -30,6 +44,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
         native_tls::TlsAcceptor::builder(cert).build().unwrap()
     );
 
+    let handler_state = state.clone();
+
+    ctrlc::set_handler(move || {
+        save(handler_state.clone());
+        std::process::exit(0); 
+    });
+
     loop {
         let (stream, addr) = listener.accept().await?;
         let tls_acceptor = tls_acceptor.clone();
@@ -43,6 +64,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             }
         });
     }
+    
 }
 
 type Tx = mpsc::UnboundedSender<String>;
@@ -103,6 +125,13 @@ impl SharedChannel {
             if *peer.0 != sender {
                 let _ = peer.1.send(msg_string.clone());
             }
+        }
+    }
+
+    fn to_json(&self) {
+        let arr = json::JsonValue::new_array();
+        for msg in self.history.iter() {
+            arr.push(msg.)
         }
     }
 }

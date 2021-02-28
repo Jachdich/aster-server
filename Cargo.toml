@@ -19,3 +19,4 @@ tracing-subscriber = { version = "0.2.7", default-features = false, features = [
 bytes = "1.0.0"
 futures = { version = "0.3.0", features = ["thread-pool"]}
 json = "*"
+ctrlc = "*"
