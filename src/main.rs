@@ -43,30 +43,28 @@ fn load(channels: &mut HashMap<String, SharedChannel>) {
                 Ok(chan_list) => {
                     //load the channels
                     for n in chan_list.members() {
-                        if n.is_string() {
-                            //load it
-                            match std::fs::read_to_string("channels.json") {
-                                Ok(chan_content) => {
-                                    match json::parse(&chan_content) {
-                                        Ok(chan_content) => {
-                                            channels.insert(n.to_string(), SharedChannel::from_json(chan_content));
-                                        }
-                                        Err(_e) => {
-                                            channels.insert(n.to_string(), SharedChannel::new());
-                                        }
+                        match std::fs::read_to_string(format!("{}.json", n.to_string())) {
+                            Ok(chan_content) => {
+                                match json::parse(&chan_content) {
+                                    Ok(chan_content) => {
+                                        channels.insert(n.to_string(), SharedChannel::from_json(chan_content));
+                                    }
+                                    Err(_e) => {
+                                        channels.insert(n.to_string(), SharedChannel::new());
+                                        println!("Couldn't parse {} channel json file", n.to_string());
                                     }
                                 }
-                                Err(_e) => {
-                                    channels.insert(n.to_string(), SharedChannel::new());
-                                }
+                            }
+                            Err(_e) => {
+                                println!("Couldn't read {} channel json file", n.to_string());
+                                channels.insert(n.to_string(), SharedChannel::new());
                             }
                         }
-                        //else, value is not a string
-                        //ignore it for now
                     }
                 }
                 Err(_e) => {
                     //default channels
+                    println!("Couldn't parse channels json");
                     channels.insert("#general".to_string(), SharedChannel::new());
                 }
             }
@@ -74,6 +72,7 @@ fn load(channels: &mut HashMap<String, SharedChannel>) {
 
         Err(_e) => {
             //default channels
+            println!("Couldn't read channels.json");
             channels.insert("#general".to_string(), SharedChannel::new());
         }
     }
@@ -135,11 +134,22 @@ impl MessageType {
     fn as_json(&self) -> json::JsonValue {
         return json::object!{content: self.content.clone(), user: self.user.as_json()};
     }
+    fn from_json(value: &json::JsonValue) -> Self {
+        MessageType {
+            content: value["content"].to_string(),
+            user: User::from_json(&value["user"]),
+        }
+    }
 }
 
 impl User {
     fn as_json(&self) -> json::JsonValue {
         return json::object!{name: self.name.clone()};
+    }
+    fn from_json(value: &json::JsonValue) -> Self {
+        User {
+            name: value["name"].to_string(),
+        }
     }
 }
 
@@ -183,8 +193,10 @@ impl SharedChannel {
     }
 
     fn from_json(value: json::JsonValue) -> Self {
-        let mut history: Vec<String>;
-        //phuck
+        let mut history: Vec<MessageType> = Vec::new();
+        for n in value.members() {
+            history.push(MessageType::from_json(n));
+        }
         SharedChannel {
             peers: HashMap::new(),
             history: history,
@@ -232,7 +244,6 @@ impl Peer {
     fn channel(&mut self, new_channel: &String, state: &mut tokio::sync::MutexGuard<'_, Shared>) {
         //let channels = &mut ;
         //let addr = self.lines.get_ref().peer_addr().unwrap();
-        println!("{:?}", self.addr);
         let tx = state.channels.get_mut(&self.channel).unwrap().peers.get(&self.addr).unwrap().clone();
         state.channels.get_mut(&self.channel).unwrap().peers.remove(&self.addr);
         state.channels.get_mut(new_channel).unwrap().peers.insert(self.addr, tx);
