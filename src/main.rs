@@ -26,13 +26,24 @@ fn write_channel(fname: &str, channel: &SharedChannel) -> std::io::Result<()> {
 
 fn save(state: Arc<Mutex<Shared>>) -> std::io::Result<()> {
     let mut channels = json::JsonValue::new_array();
-    for (name, channel) in &futures::executor::block_on(state.lock()).channels {
+    let mut users = json::JsonValue::new_object();
+
+    let mut state = futures::executor::block_on(state.lock());
+    for (name, channel) in &state.channels {
         write_channel(&format!("{}.json", name), &channel)?;
         channels.push(name.to_owned()).unwrap();
     }
-    let mut f = std::fs::File::create("channels.json")?;
-    f.write_all(channels.dump().as_bytes())?;
-    f.sync_all()?;
+
+    for (uuid, user) in &state.users {
+        users[uuid] = user.as_json();
+    }
+    
+    let mut channels_file = std::fs::File::create("channels.json")?;
+    channels_file.write_all(channels.dump().as_bytes())?;
+    channels_file.sync_all()?;
+    let mut users_file = std::fs::File::create("users.json")?;
+    users_file.write_all(users.dump().as_bytes())?;
+    users_file.sync_all()?;
     Ok(())
 }
 
@@ -117,17 +128,18 @@ async fn main() -> Result<(), Box<dyn Error>> {
     
 }
 
-type Tx = mpsc::UnboundedSender<String>;
+type Tx = mpsc::UnboundedSender<MessageType>;
 
 #[derive(Clone)]
 struct User {
     name: String,
+    pfp_file: String,
 }
 
 #[derive(Clone)]
 struct MessageType {
     content: String,
-    user: User,
+    user: u128,
 }
 
 impl MessageType {
@@ -137,7 +149,7 @@ impl MessageType {
     fn from_json(value: &json::JsonValue) -> Self {
         MessageType {
             content: value["content"].to_string(),
-            user: User::from_json(&value["user"]),
+            user: value["user"].as_u128(),
         }
     }
 }
@@ -148,7 +160,8 @@ impl User {
     }
     fn from_json(value: &json::JsonValue) -> Self {
         User {
-            name: value["name"].to_string(),
+            name: value["name"].as_str().to_string(),
+            pfp_file: value["pfp_file"].as_str().to_string(),
         }
     }
 }
@@ -160,12 +173,13 @@ struct SharedChannel {
 
 struct Shared {
     channels: HashMap<String, SharedChannel>,
-    online: Vec<String>,
+    online: Vec<u128>,
+    users: HashMap<u128, User>,
 }
 
 struct Peer {
     lines: Framed<TlsStream<TcpStream>, LinesCodec>,
-    rx: Pin<Box<dyn Stream<Item = String> + Send>>, //TODO this is not what we want to do!
+    rx: Pin<Box<dyn Stream<Item = MessageType> + Send>>, //TODO this is not what we want to do!
     channel: String,
     user: User,
     addr: SocketAddr,
@@ -174,8 +188,6 @@ struct Peer {
 impl Shared {
     fn new() -> Self {
         let mut channels: HashMap<String, SharedChannel> = HashMap::new();
-        //channels.insert("#general".to_string(), SharedChannel::new());
-        //channels.insert("#memes".to_string(), SharedChannel::new());
         load(&mut channels);
         Shared {
             channels,
@@ -204,12 +216,10 @@ impl SharedChannel {
     }
 
     async fn broadcast(&mut self, sender: SocketAddr, message: MessageType) {
-        let msg = json::object!{username: message.user.name.clone(), message: message.content.clone()};
-        let msg_string = msg.dump();
-        self.history.push(message);
+        self.history.push(message.clone());
         for peer in self.peers.iter_mut() {
             if *peer.0 != sender {
-                let _ = peer.1.send(msg_string.clone());
+                let _ = peer.1.send(message.clone());
             }
         }
     }
@@ -226,8 +236,7 @@ impl SharedChannel {
 impl Peer {
     async fn new(state: Arc<Mutex<Shared>>, lines: Framed<TlsStream<TcpStream>, LinesCodec>, channel: &String, uname: &String, addr: SocketAddr
     ) -> io::Result<Peer> {
-        //let addr = lines.get_ref().get_ref().get_ref().get_ref().peer_addr()?;
-        let (tx, mut rx) = mpsc::unbounded_channel();
+        let (tx, mut rx) = mpsc::unbounded_channel::<MessageType>();
         state.lock().await.channels.get_mut(channel).unwrap().peers.insert(addr, tx);
 
         let rx = Box::pin(async_stream::stream! {
@@ -242,8 +251,6 @@ impl Peer {
     }
 
     fn channel(&mut self, new_channel: &String, state: &mut tokio::sync::MutexGuard<'_, Shared>) {
-        //let channels = &mut ;
-        //let addr = self.lines.get_ref().peer_addr().unwrap();
         let tx = state.channels.get_mut(&self.channel).unwrap().peers.get(&self.addr).unwrap().clone();
         state.channels.get_mut(&self.channel).unwrap().peers.remove(&self.addr);
         state.channels.get_mut(new_channel).unwrap().peers.insert(self.addr, tx);
@@ -262,7 +269,7 @@ impl Stream for Peer {
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
 
         if let Poll::Ready(Some(v)) = Pin::new(&mut self.rx).poll_next(cx) {
-            return Poll::Ready(Some(Ok(Message::Received(MessageType{content: v, user: self.user.clone()}))));
+            return Poll::Ready(Some(Ok(Message::Received(v))));
         }
 
         let result: Option<_> = futures::ready!(Pin::new(&mut self.lines).poll_next(cx));
@@ -369,9 +376,8 @@ async fn process(state: Arc<Mutex<Shared>>, stream: TlsStream<TcpStream>, addr: 
             }
 
             Ok(Message::Received(msg)) => {
-                let msg = json::object!{username: msg.user.name.clone(), message: msg.content.clone()};
-                let msg_string = msg.dump();
-                peer.lines.send(&msg_string).await?;
+                //let msg = json::object!{username: msg.user.name.clone(), message: msg.as_json()};
+                peer.lines.send(&msg.as_json().dump()).await?;
             }
 
             Err(e) => { println!("Error lmao u figure it out: {}", e); }
