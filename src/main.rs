@@ -16,6 +16,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::io::Write;
+use std::io::Read;
 use rand::prelude::*;
 
 fn write_channel(fname: &str, channel: &SharedChannel) -> std::io::Result<()> {
@@ -36,7 +37,7 @@ fn save(state: Arc<Mutex<Shared>>) -> std::io::Result<()> {
     }
 
     for (uuid, user) in &state.users {
-        users[uuid] = user.as_json();
+        users[json::stringify(*uuid)] = user.as_json();
     }
     
     let mut channels_file = std::fs::File::create("channels.json")?;
@@ -48,7 +49,7 @@ fn save(state: Arc<Mutex<Shared>>) -> std::io::Result<()> {
     Ok(())
 }
 
-fn load(channels: &mut HashMap<String, SharedChannel>) {
+fn load(channels: &mut HashMap<String, SharedChannel>, users: &mut HashMap<u64, User>) {
     match std::fs::read_to_string("channels.json") {
         Ok(content) => {
             match json::parse(&content) {
@@ -86,6 +87,27 @@ fn load(channels: &mut HashMap<String, SharedChannel>) {
             //default channels
             println!("Couldn't read channels.json");
             channels.insert("#general".to_string(), SharedChannel::new());
+        }
+    }
+    match std::fs::read_to_string("users.json") {
+        Ok(content) => {
+            match json::parse(&content) {
+                Ok(user_list) => {
+                    //load the channels
+                    for (key, val) in user_list.entries() {
+                        users.insert(key.parse::<u64>().unwrap(), User::from_json(val));
+                    }
+                }
+                Err(_e) => {
+                    //default channels
+                    println!("Couldn't parse users json");
+                }
+            }
+        }
+
+        Err(_e) => {
+            //default channels
+            println!("Couldn't read users.json");
         }
     }
 }
@@ -135,35 +157,36 @@ type Tx = mpsc::UnboundedSender<MessageType>;
 struct User {
     name: String,
     pfp: String,
-    uuid: u128,
+    uuid: u64,
 }
 
 #[derive(Clone)]
 struct MessageType {
     content: String,
-    user: u128,
+    user: u64,
 }
 
 impl MessageType {
     fn as_json(&self) -> json::JsonValue {
-        return json::object!{content: self.content.clone(), user: self.user.as_json()};
+        return json::object!{content: self.content.clone(), user: self.user};
     }
     fn from_json(value: &json::JsonValue) -> Self {
         MessageType {
             content: value["content"].to_string(),
-            user: value["user"].as_u128(),
+            user: value["user"].as_u64().unwrap(),
         }
     }
 }
 
 impl User {
     fn as_json(&self) -> json::JsonValue {
-        return json::object!{name: self.name.clone()};
+        return json::object!{name: self.name.clone(), uuid: self.uuid, pfp: self.pfp.clone()};
     }
     fn from_json(value: &json::JsonValue) -> Self {
         User {
-            name: value["name"].as_str().to_string(),
-            pfp: value["pfp"].as_str().to_string(),
+            name: value["name"].as_str().unwrap().to_string(),
+            pfp: value["pfp"].as_str().unwrap().to_string(),
+            uuid: value["uuid"].as_u64().unwrap(),
         }
     }
 }
@@ -175,15 +198,15 @@ struct SharedChannel {
 
 struct Shared {
     channels: HashMap<String, SharedChannel>,
-    online: Vec<u128>,
-    users: HashMap<u128, User>,
+    online: Vec<u64>,
+    users: HashMap<u64, User>,
 }
 
 struct Peer {
     lines: Framed<TlsStream<TcpStream>, LinesCodec>,
     rx: Pin<Box<dyn Stream<Item = MessageType> + Send>>,
     channel: String,
-    user: User,
+    user: u64,
     addr: SocketAddr,
     logged_in: bool,
 }
@@ -191,10 +214,12 @@ struct Peer {
 impl Shared {
     fn new() -> Self {
         let mut channels: HashMap<String, SharedChannel> = HashMap::new();
-        load(&mut channels);
+        let mut users: HashMap<u64, User> = HashMap::new();
+        load(&mut channels, &mut users);
         Shared {
             channels,
             online: Vec::new(),
+            users,
         }
     }
 }
@@ -237,7 +262,7 @@ impl SharedChannel {
 }
 
 impl Peer {
-    async fn new(state: Arc<Mutex<Shared>>, lines: Framed<TlsStream<TcpStream>, LinesCodec>, channel: &String, uname: &String, addr: SocketAddr
+    async fn new(state: Arc<Mutex<Shared>>, lines: Framed<TlsStream<TcpStream>, LinesCodec>, channel: &String, addr: SocketAddr
     ) -> io::Result<Peer> {
         let (tx, mut rx) = mpsc::unbounded_channel::<MessageType>();
         state.lock().await.channels.get_mut(channel).unwrap().peers.insert(addr, tx);
@@ -249,8 +274,7 @@ impl Peer {
         });
 
         let channel = channel.to_owned();
-        let user = User{name: uname.to_owned()};
-        Ok(Peer {lines, rx, channel, user, addr})
+        Ok(Peer {lines, rx, channel, user: u64::MAX, addr, logged_in: false})
     }
 
     fn channel(&mut self, new_channel: &String, state: &mut tokio::sync::MutexGuard<'_, Shared>) {
@@ -289,27 +313,71 @@ async fn process_command(msg: &String, state: Arc<Mutex<Shared>>, peer: &mut Pee
     let split = msg.split(" ");
     let argv = split.collect::<Vec<&str>>();
     let mut state_lock = state.lock().await;
+
+    if !peer.logged_in {
+        match argv[0] {
+            "/register" => {
+                if argv.len() < 2 {
+                    peer.lines.send("Usage: /register <username>").await?;
+                    return Ok(());
+                }
+                //register new user with metadata
+                let pfp: String;
+                match std::fs::File::open("default.png") {
+                    Ok(mut file) => {
+                        let mut data = Vec::new();
+                        file.read_to_end(&mut data).unwrap();
+                        pfp = base64::encode(data);
+                        println!("{}", pfp);
+                    }
+                    Err(e) => {
+                        panic!("{} Couldn't read default profile picture. Please provide default.png!", e);
+                    }
+                }
+
+                let uuid: u64 = random();
+                let user = User{
+                    name: argv[1].to_string(),
+                    pfp: pfp,
+                    uuid: uuid,
+                };
+
+                state_lock.users.insert(uuid, user);
+
+                peer.logged_in = true;
+            }
+
+            "/login" => {
+                //log in an existing user
+            }
+
+            _ => {}
+        }
+        return Ok(());
+    }
+    
     match argv[0] {
         "/nick" => {
             if argv.len() < 2 {
                 peer.lines.send("Usage: /nick <nickname>").await?;
             } else {
-                let index = state_lock.online.iter().position(|x| *x == peer.user.name).unwrap();
-                state_lock.online.remove(index);
-                peer.user.name = argv[1].to_string();
-                state_lock.online.push(peer.user.name.clone());
+                //let index = state_lock.online.iter().position(|x| *x == peer.user.name).unwrap();
+                //state_lock.online.remove(index);
+                state_lock.users.get_mut(&peer.user).unwrap().name = argv[1].to_string();
+                //state_lock.online.push(peer.user.name.clone());
             }
         }
         
         "/list" => {
+            /*
             let mut res = json::JsonValue::new_array();
             for user in state_lock.online.iter() {
-                res.push(user.to_owned()).unwrap();
+                res.push(user).unwrap();
             }
             let final_json = json::object!{
                 res: res,
             };
-            peer.lines.send(&final_json.dump()).await?;
+            peer.lines.send(&final_json.dump()).await?;*/
         }
 
         "/join" => {
@@ -336,41 +404,6 @@ async fn process_command(msg: &String, state: Arc<Mutex<Shared>>, peer: &mut Pee
             peer.lines.send(&json_obj.dump()).await?;
 
         }
-
-        "/register" => {
-            if argv.len() < 2 {
-                peer.lines.send("Usage: /register <username>").await?;
-                return;
-            }
-            //register new user with metadata
-            let pfp: String;
-            match std::fs::read_to_string("channels.json") {
-                Ok(content) => {
-                    pfp = content;
-                }
-                Err(_e) => {
-                    panic!("Couldn't read default profile picture. Please provide default.png!");
-                }
-            }
-
-            let uuid: u128 = random();
-            let user = User{
-                name: argv[1],
-                pfp: pfp,
-                uuid: uuid,
-            };
-
-            state_lock.users.add(user)
-
-            peer.logged_in = true;
-        }
-
-        "/login" => {
-            //log in an existing user
-        }
-
-        
-
         //"/createchannel" => {
         //    
         //    shared_lock.channels.insert("#".to_string(), SharedChannel::new());
@@ -388,13 +421,14 @@ async fn process(state: Arc<Mutex<Shared>>, stream: TlsStream<TcpStream>, addr: 
     let channel = "#general".to_string();
 
     let uname = format!("{}", addr);
+    /*
     {
         let mut state = state.lock().await;
         state.online.push(uname.clone());
-    }
+    }*/
 
     let lines = Framed::new(stream, LinesCodec::new());
-    let mut peer = Peer::new(state.clone(), lines, &channel, &uname, addr).await?;
+    let mut peer = Peer::new(state.clone(), lines, &channel, addr).await?;
     
     while let Some(result) = peer.next().await {
         match result {
