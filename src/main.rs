@@ -16,6 +16,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::io::Write;
+use rand::prelude::*;
 
 fn write_channel(fname: &str, channel: &SharedChannel) -> std::io::Result<()> {
     let mut f = std::fs::File::create(fname)?;
@@ -133,7 +134,8 @@ type Tx = mpsc::UnboundedSender<MessageType>;
 #[derive(Clone)]
 struct User {
     name: String,
-    pfp_file: String,
+    pfp: String,
+    uuid: u128,
 }
 
 #[derive(Clone)]
@@ -161,7 +163,7 @@ impl User {
     fn from_json(value: &json::JsonValue) -> Self {
         User {
             name: value["name"].as_str().to_string(),
-            pfp_file: value["pfp_file"].as_str().to_string(),
+            pfp: value["pfp"].as_str().to_string(),
         }
     }
 }
@@ -179,10 +181,11 @@ struct Shared {
 
 struct Peer {
     lines: Framed<TlsStream<TcpStream>, LinesCodec>,
-    rx: Pin<Box<dyn Stream<Item = MessageType> + Send>>, //TODO this is not what we want to do!
+    rx: Pin<Box<dyn Stream<Item = MessageType> + Send>>,
     channel: String,
     user: User,
     addr: SocketAddr,
+    logged_in: bool,
 }
 
 impl Shared {
@@ -332,6 +335,38 @@ async fn process_command(msg: &String, state: Arc<Mutex<Shared>>, peer: &mut Pee
             let json_obj = json::object!{res: res};
             peer.lines.send(&json_obj.dump()).await?;
 
+        }
+
+        "/register" => {
+            if argv.len() < 2 {
+                peer.lines.send("Usage: /register <username>").await?;
+                return;
+            }
+            //register new user with metadata
+            let pfp: String;
+            match std::fs::read_to_string("channels.json") {
+                Ok(content) => {
+                    pfp = content;
+                }
+                Err(_e) => {
+                    panic!("Couldn't read default profile picture. Please provide default.png!");
+                }
+            }
+
+            let uuid: u128 = random();
+            let user = User{
+                name: argv[1],
+                pfp: pfp,
+                uuid: uuid,
+            };
+
+            state_lock.users.add(user)
+
+            peer.logged_in = true;
+        }
+
+        "/login" => {
+            //log in an existing user
         }
 
         
