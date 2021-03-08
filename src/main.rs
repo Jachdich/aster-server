@@ -30,7 +30,7 @@ fn save(state: Arc<Mutex<Shared>>) -> std::io::Result<()> {
     let mut channels = json::JsonValue::new_array();
     let mut users = json::JsonValue::new_object();
 
-    let mut state = futures::executor::block_on(state.lock());
+    let state = futures::executor::block_on(state.lock());
     for (name, channel) in &state.channels {
         write_channel(&format!("{}.json", name), &channel)?;
         channels.push(name.to_owned()).unwrap();
@@ -314,13 +314,23 @@ async fn process_command(msg: &String, state: Arc<Mutex<Shared>>, peer: &mut Pee
     let argv = split.collect::<Vec<&str>>();
     let mut state_lock = state.lock().await;
 
+    //commands that can be run when logged in or logged out
+    match argv[0] {
+        "/get_all_metadata" => {
+            let mut meta = json::JsonValue::new_array();
+            for (_k, v) in &state_lock.users {
+                meta.push(v.as_json()).unwrap();
+            }
+            peer.lines.send(json::object!{command: "metadata", data: meta}.dump()).await?;
+        }
+
+        _ => {}
+    }
+
+    //commands that can be run only if the user is logged out
     if !peer.logged_in {
         match argv[0] {
             "/register" => {
-                if argv.len() < 2 {
-                    peer.lines.send("Usage: /register <username>").await?;
-                    return Ok(());
-                }
                 //register new user with metadata
                 let pfp: String;
                 match std::fs::File::open("default.png") {
@@ -328,7 +338,6 @@ async fn process_command(msg: &String, state: Arc<Mutex<Shared>>, peer: &mut Pee
                         let mut data = Vec::new();
                         file.read_to_end(&mut data).unwrap();
                         pfp = base64::encode(data);
-                        println!("{}", pfp);
                     }
                     Err(e) => {
                         panic!("{} Couldn't read default profile picture. Please provide default.png!", e);
@@ -337,25 +346,30 @@ async fn process_command(msg: &String, state: Arc<Mutex<Shared>>, peer: &mut Pee
 
                 let uuid: u64 = random();
                 let user = User{
-                    name: argv[1].to_string(),
+                    name: json::stringify(uuid),
                     pfp: pfp,
                     uuid: uuid,
                 };
 
                 state_lock.users.insert(uuid, user);
-
+                peer.lines.send(json::object!{"command": "set", "key": "self_uuid", "value": uuid}.dump()).await?;
                 peer.logged_in = true;
+                peer.user = uuid;
             }
 
             "/login" => {
                 //log in an existing user
+                let uuid = argv[1].parse::<u64>().unwrap();
+                peer.user = uuid;
+                peer.logged_in = true;
             }
 
             _ => {}
         }
         return Ok(());
     }
-    
+
+    //commands that can be run only if the user is logged in
     match argv[0] {
         "/nick" => {
             if argv.len() < 2 {
@@ -400,7 +414,7 @@ async fn process_command(msg: &String, state: Arc<Mutex<Shared>>, peer: &mut Pee
                 //peer.lines.send(msg).await;
                 res.push(msg.as_json()).unwrap();
             }
-            let json_obj = json::object!{res: res};
+            let json_obj = json::object!{history: res};
             peer.lines.send(&json_obj.dump()).await?;
 
         }
@@ -419,9 +433,7 @@ async fn process_command(msg: &String, state: Arc<Mutex<Shared>>, peer: &mut Pee
 
 async fn process(state: Arc<Mutex<Shared>>, stream: TlsStream<TcpStream>, addr: SocketAddr) -> Result<(), Box<dyn Error>> {
     let channel = "#general".to_string();
-
-    let uname = format!("{}", addr);
-    /*
+        /*
     {
         let mut state = state.lock().await;
         state.online.push(uname.clone());
@@ -439,13 +451,14 @@ async fn process(state: Arc<Mutex<Shared>>, stream: TlsStream<TcpStream>, addr: 
                 if msg.content.chars().nth(0).unwrap() == '/' {
                     process_command(&msg.content, state.clone(), &mut peer).await?;
                 } else {
-                    let mut state_lock = state.lock().await;
-                    state_lock.channels.get_mut(&peer.channel).unwrap().broadcast(addr, msg).await;
+                    if peer.logged_in {
+                        let mut state_lock = state.lock().await;
+                        state_lock.channels.get_mut(&peer.channel).unwrap().broadcast(addr, msg).await;
+                    }
                 }
             }
 
             Ok(Message::Received(msg)) => {
-                //let msg = json::object!{username: msg.user.name.clone(), message: msg.as_json()};
                 peer.lines.send(&msg.as_json().dump()).await?;
             }
 
