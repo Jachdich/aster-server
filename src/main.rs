@@ -252,6 +252,14 @@ impl SharedChannel {
         }
     }
 
+    async fn broadcast_raw(&mut self, sender: SocketAddr, message: String) {
+        for peer in self.peers.iter_mut() {
+            if *peer.0 != sender {
+                let _ = peer.1.send(message.clone());
+            }
+        }
+    }
+
     fn as_json(&self) -> json::JsonValue {
         let mut arr = json::JsonValue::new_array();
         for msg in self.history.iter() {
@@ -378,6 +386,10 @@ async fn process_command(msg: &String, state: Arc<Mutex<Shared>>, peer: &mut Pee
                 //let index = state_lock.online.iter().position(|x| *x == peer.user.name).unwrap();
                 //state_lock.online.remove(index);
                 state_lock.users.get_mut(&peer.user).unwrap().name = argv[1].to_string();
+                let meta = json::array![state_lock.users.get_mut(&peer.user).unwrap().as_json()];
+                state_lock.channels.get(&peer.channel).unwrap().broadcast_raw(
+                    peer.addr,
+                    json::object!{command: "metadata", data: meta}.dump()).await;
                 //state_lock.online.push(peer.user.name.clone());
             }
         }
@@ -397,8 +409,9 @@ async fn process_command(msg: &String, state: Arc<Mutex<Shared>>, peer: &mut Pee
         "/join" => {
             if argv.len() < 2 {
                 peer.lines.send("Usage: /join <[#]channel>").await?;
+            } else {
+                peer.channel(&argv[1].to_string(), &mut state_lock);
             }
-            peer.channel(&argv[1].to_string(), &mut state_lock);
         }
 
         "/history" => {
@@ -417,6 +430,14 @@ async fn process_command(msg: &String, state: Arc<Mutex<Shared>>, peer: &mut Pee
             let json_obj = json::object!{history: res};
             peer.lines.send(&json_obj.dump()).await?;
 
+        }
+
+        "/pfp" => {
+            if argv.len() < 2 {
+                peer.lines.send("Usage: /pfp <base64 encoded PNG file>").await?;
+                return Ok(());
+            }
+            state_lock.users.get_mut(&peer.user).unwrap().pfp = argv[1].to_string();
         }
         //"/createchannel" => {
         //    
