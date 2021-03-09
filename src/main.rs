@@ -161,17 +161,28 @@ struct User {
 }
 
 #[derive(Clone)]
-struct MessageType {
+struct CookedMessage {
     content: String,
     user: u64,
 }
 
-impl MessageType {
+#[derive(Clone)]
+struct RawMessage {
+    content: String,
+}
+
+#[derive(Clone)]
+enum MessageType {
+    Raw(RawMessage),
+    Cooked(CookedMessage),
+}
+
+impl CookedMessage {
     fn as_json(&self) -> json::JsonValue {
         return json::object!{content: self.content.clone(), user: self.user};
     }
     fn from_json(value: &json::JsonValue) -> Self {
-        MessageType {
+        CookedMessage{
             content: value["content"].to_string(),
             user: value["user"].as_u64().unwrap(),
         }
@@ -193,7 +204,7 @@ impl User {
 
 struct SharedChannel {
     peers: HashMap<SocketAddr, Tx>,
-    history: Vec<MessageType>,
+    history: Vec<CookedMessage>
 }
 
 struct Shared {
@@ -233,9 +244,9 @@ impl SharedChannel {
     }
 
     fn from_json(value: json::JsonValue) -> Self {
-        let mut history: Vec<MessageType> = Vec::new();
+        let mut history: Vec<CookedMessage> = Vec::new();
         for n in value.members() {
-            history.push(MessageType::from_json(n));
+            history.push(CookedMessage::from_json(n));
         }
         SharedChannel {
             peers: HashMap::new(),
@@ -244,18 +255,20 @@ impl SharedChannel {
     }
 
     async fn broadcast(&mut self, sender: SocketAddr, message: MessageType) {
-        self.history.push(message.clone());
-        for peer in self.peers.iter_mut() {
-            if *peer.0 != sender {
-                let _ = peer.1.send(message.clone());
-            }
-        }
-    }
+        match &message {
+            MessageType::Cooked(msg) => {
+                self.history.push(msg.clone());
+                for peer in self.peers.iter_mut() {
+                    if *peer.0 != sender {
+                        let _ = peer.1.send(message.clone());
+                    }
+                }
 
-    async fn broadcast_raw(&mut self, sender: SocketAddr, message: String) {
-        for peer in self.peers.iter_mut() {
-            if *peer.0 != sender {
-                let _ = peer.1.send(message.clone());
+            }
+            MessageType::Raw(_) => {
+                for peer in self.peers.iter_mut() {
+                    let _ = peer.1.send(message.clone());
+                }
             }
         }
     }
@@ -310,7 +323,8 @@ impl Stream for Peer {
         let result: Option<_> = futures::ready!(Pin::new(&mut self.lines).poll_next(cx));
 
         Poll::Ready(match result {
-            Some(Ok(message)) => Some(Ok(Message::Broadcast(MessageType{content: message, user: self.user.clone()}))),
+            Some(Ok(message)) => Some(Ok(Message::Broadcast(
+                                         MessageType::Cooked(CookedMessage{content: message, user: self.user.clone()})))),
             Some(Err(e)) => Some(Err(e)),
             None => None,
         })
@@ -368,6 +382,7 @@ async fn process_command(msg: &String, state: Arc<Mutex<Shared>>, peer: &mut Pee
             "/login" => {
                 //log in an existing user
                 let uuid = argv[1].parse::<u64>().unwrap();
+                peer.lines.send(json::object!{"command": "set", "key": "self_uuid", "value": uuid}.dump()).await?;
                 peer.user = uuid;
                 peer.logged_in = true;
             }
@@ -387,9 +402,9 @@ async fn process_command(msg: &String, state: Arc<Mutex<Shared>>, peer: &mut Pee
                 //state_lock.online.remove(index);
                 state_lock.users.get_mut(&peer.user).unwrap().name = argv[1].to_string();
                 let meta = json::array![state_lock.users.get_mut(&peer.user).unwrap().as_json()];
-                state_lock.channels.get(&peer.channel).unwrap().broadcast_raw(
+                state_lock.channels.get_mut(&peer.channel).unwrap().broadcast(
                     peer.addr,
-                    json::object!{command: "metadata", data: meta}.dump()).await;
+                    MessageType::Raw(RawMessage{content: json::object!{command: "metadata", data: meta}.dump()})).await;
                 //state_lock.online.push(peer.user.name.clone());
             }
         }
@@ -438,6 +453,11 @@ async fn process_command(msg: &String, state: Arc<Mutex<Shared>>, peer: &mut Pee
                 return Ok(());
             }
             state_lock.users.get_mut(&peer.user).unwrap().pfp = argv[1].to_string();
+            let meta = json::array![state_lock.users.get_mut(&peer.user).unwrap().as_json()];
+            state_lock.channels.get_mut(&peer.channel).unwrap().broadcast(
+                peer.addr,
+                MessageType::Raw(RawMessage{content: json::object!{command: "metadata", data: meta}.dump()})).await;
+
         }
         //"/createchannel" => {
         //    
@@ -466,21 +486,35 @@ async fn process(state: Arc<Mutex<Shared>>, stream: TlsStream<TcpStream>, addr: 
     while let Some(result) = peer.next().await {
         match result {
             Ok(Message::Broadcast(msg)) => {
-                if msg.content.len() == 0 {
-                    continue;
-                }
-                if msg.content.chars().nth(0).unwrap() == '/' {
-                    process_command(&msg.content, state.clone(), &mut peer).await?;
-                } else {
-                    if peer.logged_in {
-                        let mut state_lock = state.lock().await;
-                        state_lock.channels.get_mut(&peer.channel).unwrap().broadcast(addr, msg).await;
+                match msg {
+                    MessageType::Cooked(msg) => {
+                        if msg.content.len() == 0 {
+                            continue;
+                        }
+                        if msg.content.chars().nth(0).unwrap() == '/' {
+                            process_command(&msg.content, state.clone(), &mut peer).await?;
+                        } else {
+                            if peer.logged_in {
+                                let mut state_lock = state.lock().await;
+                                state_lock.channels.get_mut(&peer.channel).unwrap().broadcast(addr, MessageType::Cooked(msg)).await;
+                            }
+                        }
+                    }
+                    MessageType::Raw(msg) => {
+                        //this doesn't make sense
                     }
                 }
             }
 
             Ok(Message::Received(msg)) => {
-                peer.lines.send(&msg.as_json().dump()).await?;
+                match msg {
+                    MessageType::Cooked(msg) => {
+                        peer.lines.send(&msg.as_json().dump()).await?;
+                    }
+                    MessageType::Raw(msg) => {
+                        peer.lines.send(&msg.content).await?;
+                    }
+                }
             }
 
             Err(e) => { println!("Error lmao u figure it out: {}", e); }
