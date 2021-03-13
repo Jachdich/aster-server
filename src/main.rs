@@ -7,6 +7,9 @@ use tokio_stream::{Stream, StreamExt};
 use tokio_util::codec::{Framed, LinesCodec, LinesCodecError};
 use tokio_native_tls::{TlsStream};
 
+use rusqlite::{Connection, Result};
+use rusqlite::NO_PARAMS;
+
 use futures::SinkExt;
 use std::collections::HashMap;
 use std::error::Error;
@@ -27,6 +30,7 @@ fn write_channel(fname: &str, channel: &SharedChannel) -> std::io::Result<()> {
 }
 
 fn save(state: Arc<Mutex<Shared>>) -> std::io::Result<()> {
+/*
     let mut channels = json::JsonValue::new_array();
     let mut users = json::JsonValue::new_object();
 
@@ -45,11 +49,12 @@ fn save(state: Arc<Mutex<Shared>>) -> std::io::Result<()> {
     channels_file.sync_all()?;
     let mut users_file = std::fs::File::create("users.json")?;
     users_file.write_all(users.dump().as_bytes())?;
-    users_file.sync_all()?;
+    users_file.sync_all()?;*/
     Ok(())
 }
 
 fn load(channels: &mut HashMap<String, SharedChannel>, users: &mut HashMap<u64, User>) {
+/*
     match std::fs::read_to_string("channels.json") {
         Ok(content) => {
             match json::parse(&content) {
@@ -109,7 +114,7 @@ fn load(channels: &mut HashMap<String, SharedChannel>, users: &mut HashMap<u64, 
             //default channels
             println!("Couldn't read users.json");
         }
-    }
+    }*/
 }
 
 #[tokio::main]
@@ -152,11 +157,20 @@ async fn main() -> Result<(), Box<dyn Error>> {
 }
 
 type Tx = mpsc::UnboundedSender<MessageType>;
+/*
+#[derive(Clone)]
+struct Group {
+    name: String,
+    perms: u64,
+    uuid: u64,
+}*/
 
 #[derive(Clone)]
 struct User {
     name: String,
     pfp: String,
+//    groups: Vec<u64>,
+//    perms: u64,
     uuid: u64,
 }
 
@@ -177,40 +191,26 @@ enum MessageType {
     Cooked(CookedMessage),
 }
 
-impl CookedMessage {
+/*
+impl Group {
     fn as_json(&self) -> json::JsonValue {
-        return json::object!{content: self.content.clone(), user: self.user};
+        return json::object!{name: self.name.clone(), perms: self.perms, uuid: self.uuid};
     }
     fn from_json(value: &json::JsonValue) -> Self {
-        CookedMessage{
-            content: value["content"].to_string(),
-            user: value["user"].as_u64().unwrap(),
+        Group {
+            name: value["name"].to_string(),
+            perms: value["perms"].
         }
     }
-}
-
-impl User {
-    fn as_json(&self) -> json::JsonValue {
-        return json::object!{name: self.name.clone(), uuid: self.uuid, pfp: self.pfp.clone()};
-    }
-    fn from_json(value: &json::JsonValue) -> Self {
-        User {
-            name: value["name"].as_str().unwrap().to_string(),
-            pfp: value["pfp"].as_str().unwrap().to_string(),
-            uuid: value["uuid"].as_u64().unwrap(),
-        }
-    }
-}
+}*/
 
 struct SharedChannel {
     peers: HashMap<SocketAddr, Tx>,
-    history: Vec<CookedMessage>
 }
 
 struct Shared {
     channels: HashMap<String, SharedChannel>,
     online: Vec<u64>,
-    users: HashMap<u64, User>,
 }
 
 struct Peer {
@@ -243,17 +243,6 @@ impl SharedChannel {
         }
     }
 
-    fn from_json(value: json::JsonValue) -> Self {
-        let mut history: Vec<CookedMessage> = Vec::new();
-        for n in value.members() {
-            history.push(CookedMessage::from_json(n));
-        }
-        SharedChannel {
-            peers: HashMap::new(),
-            history: history,
-        }
-    }
-
     async fn broadcast(&mut self, sender: SocketAddr, message: MessageType) {
         match &message {
             MessageType::Cooked(msg) => {
@@ -271,14 +260,6 @@ impl SharedChannel {
                 }
             }
         }
-    }
-
-    fn as_json(&self) -> json::JsonValue {
-        let mut arr = json::JsonValue::new_array();
-        for msg in self.history.iter() {
-            arr.push(msg.as_json()).unwrap();
-        }
-        return arr;
     }
 }
 
