@@ -22,4 +22,4 @@ json = "*"
 ctrlc = "*"
 rand = "*"
 base64 = "*"
-rusqlite = "*"
+diesel = { version = "*", features = ["sqlite"]}

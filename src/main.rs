@@ -7,8 +7,9 @@ use tokio_stream::{Stream, StreamExt};
 use tokio_util::codec::{Framed, LinesCodec, LinesCodecError};
 use tokio_native_tls::{TlsStream};
 
-use rusqlite::{Connection, Result};
-use rusqlite::NO_PARAMS;
+#[macro_use]
+extern crate diesel;
+use diesel::prelude::*;
 
 use futures::SinkExt;
 use std::collections::HashMap;
@@ -21,6 +22,9 @@ use std::task::{Context, Poll};
 use std::io::Write;
 use std::io::Read;
 use rand::prelude::*;
+
+pub mod schema;
+pub mod models;
 
 fn write_channel(fname: &str, channel: &SharedChannel) -> std::io::Result<()> {
     let mut f = std::fs::File::create(fname)?;
@@ -53,7 +57,8 @@ fn save(state: Arc<Mutex<Shared>>) -> std::io::Result<()> {
     Ok(())
 }
 
-fn load(channels: &mut HashMap<String, SharedChannel>, users: &mut HashMap<u64, User>) {
+fn load(channels: &mut HashMap<String, SharedChannel>, users: &mut HashMap<u64, User>, db: &mut SqliteConnection) {
+    
 /*
     match std::fs::read_to_string("channels.json") {
         Ok(content) => {
@@ -121,7 +126,6 @@ fn load(channels: &mut HashMap<String, SharedChannel>, users: &mut HashMap<u64, 
 async fn main() -> Result<(), Box<dyn Error>> {
 
     let state = Arc::new(Mutex::new(Shared::new()));
-    save(state.clone()).unwrap();
     let addr = "0.0.0.0:2345".to_string();
     
     let listener = TcpListener::bind(&addr).await?;
@@ -211,6 +215,7 @@ struct SharedChannel {
 struct Shared {
     channels: HashMap<String, SharedChannel>,
     online: Vec<u64>,
+    db: SqliteConnection,
 }
 
 struct Peer {
@@ -226,11 +231,13 @@ impl Shared {
     fn new() -> Self {
         let mut channels: HashMap<String, SharedChannel> = HashMap::new();
         let mut users: HashMap<u64, User> = HashMap::new();
-        load(&mut channels, &mut users);
+        let mut sqlitedb = SqliteConnection::establish("aster.db").expect(&format!("Error connecting to the database file {}", "aster.db"));
+        load(&mut channels, &mut users, &mut sqlitedb);
         Shared {
             channels,
             online: Vec::new(),
             users,
+            db: sqlitedb,
         }
     }
 }
@@ -240,6 +247,7 @@ impl SharedChannel {
         SharedChannel {
             peers: HashMap::new(),
             history: Vec::new(),
+            
         }
     }
 
