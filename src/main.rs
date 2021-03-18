@@ -25,14 +25,18 @@ use rand::prelude::*;
 
 pub mod schema;
 pub mod models;
-pub mod new_row;
 
+use models::User;
+use models::CookedMessage;
+use models::Channel;
+
+/*
 fn write_channel(fname: &str, channel: &SharedChannel) -> std::io::Result<()> {
     let mut f = std::fs::File::create(fname)?;
     f.write_all(channel.as_json().dump().as_bytes())?;
     f.sync_all()?;
     Ok(())
-}
+}*/
 
 fn save(state: Arc<Mutex<Shared>>) -> std::io::Result<()> {
 /*
@@ -58,7 +62,7 @@ fn save(state: Arc<Mutex<Shared>>) -> std::io::Result<()> {
     Ok(())
 }
 
-fn load(channels: &mut HashMap<String, SharedChannel>, users: &mut HashMap<u64, User>, db: &mut SqliteConnection) {
+fn load(channels: &mut HashMap<i64, SharedChannel>, db: &mut SqliteConnection) {
     
 /*
     match std::fs::read_to_string("channels.json") {
@@ -162,31 +166,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
 }
 
 type Tx = mpsc::UnboundedSender<MessageType>;
-/*
-#[derive(Clone)]
-struct Group {
-    name: String,
-    perms: u64,
-    uuid: u64,
-}*/
-
-#[derive(Clone)]
-struct User {
-    name: String,
-    pfp: String,
-//    groups: Vec<u64>,
-//    perms: u64,
-    uuid: u64,
-}
-
-#[derive(Clone)]
-struct CookedMessage {
-    pub uuid: i64,
-    pub content: String,
-    pub author_uuid: i64,
-    pub channel_uuid: i64,
-    pub date: i64,
-}
 
 #[derive(Clone)]
 struct RawMessage {
@@ -214,52 +193,69 @@ impl Group {
 
 struct SharedChannel {
     peers: HashMap<SocketAddr, Tx>,
+    channel: Channel,
 }
 
 struct Shared {
-    channels: HashMap<String, SharedChannel>,
-    online: Vec<u64>,
+    channels: HashMap<i64, SharedChannel>,
+    online: Vec<i64>,
     conn: SqliteConnection,
 }
 
 struct Peer {
     lines: Framed<TlsStream<TcpStream>, LinesCodec>,
     rx: Pin<Box<dyn Stream<Item = MessageType> + Send>>,
-    channel: String,
-    user: u64,
+    channel: i64,
+    user: i64,
     addr: SocketAddr,
     logged_in: bool,
 }
 
 impl Shared {
     fn new() -> Self {
-        let mut channels: HashMap<String, SharedChannel> = HashMap::new();
-        let mut users: HashMap<u64, User> = HashMap::new();
+        let mut channels: HashMap<i64, SharedChannel> = HashMap::new();
         let mut sqlitedb = SqliteConnection::establish("aster.db").expect(&format!("Error connecting to the database file {}", "aster.db"));
-        load(&mut channels, &mut users, &mut sqlitedb);
+        load(&mut channels, &mut sqlitedb);
         Shared {
             channels,
             online: Vec::new(),
-            users,
             conn: sqlitedb,
         }
+    }
+
+    fn get_users(&self) -> HashMap<i64, User> {
+    }
+
+    fn get_user(&self, user: &i64) -> User {
+    }
+
+//    fn get_channel(&self, channel: &i64) -> Channel {
+
+//    }
+
+    fn get_channel_by_name(&self, channel: &String) -> Channel {
+    }
+
+    fn insert_user(&self, user: User) {
+    }
+
+    fn update_user(&self, user: User) {
     }
 }
 
 impl SharedChannel {
-    fn new() -> Self {
+    fn new(channel: Channel) -> Self {
         SharedChannel {
             peers: HashMap::new(),
-            history: Vec::new(),
-            
+            channel,             
         }
     }
 
-    async fn broadcast(&mut self, sender: SocketAddr, message: MessageType, conn: &SqliteConnection) {
+    fn broadcast(&self, sender: SocketAddr, message: MessageType, conn: &SqliteConnection) {
         match &message {
             MessageType::Cooked(msg) => {
                 self.add_to_history(msg.clone(), conn);
-                for peer in self.peers.iter_mut() {
+                for peer in self.peers.iter() {
                     if *peer.0 != sender {
                         let _ = peer.1.send(message.clone());
                     }
@@ -267,33 +263,26 @@ impl SharedChannel {
 
             }
             MessageType::Raw(_) => {
-                for peer in self.peers.iter_mut() {
+                for peer in self.peers.iter() {
                     let _ = peer.1.send(message.clone());
                 }
             }
         }
     }
 
-    fn add_to_history(&mut self, msg: CookedMessage, conn: &SqliteConnection) {
-        let new_msg = new_row::Message{
-            uuid: msg.uuid,
-            content: &msg.content[..],
-            author_uuid: msg.author_uuid,
-            channel_uuid: msg.channel_uuid,
-            date: msg.date,
-        };
+    fn add_to_history(&self, msg: CookedMessage, conn: &SqliteConnection) {
         let _ = diesel::insert_into(schema::messages::table)
-            .values(&new_msg)
-            .get_result(conn)
+            .values(&msg)
+            .execute(conn)
             .expect("Error appending to history");
     }
 }
 
 impl Peer {
-    async fn new(state: Arc<Mutex<Shared>>, lines: Framed<TlsStream<TcpStream>, LinesCodec>, channel: &String, addr: SocketAddr
+    async fn new(state: Arc<Mutex<Shared>>, lines: Framed<TlsStream<TcpStream>, LinesCodec>, channel: i64, addr: SocketAddr
     ) -> io::Result<Peer> {
         let (tx, mut rx) = mpsc::unbounded_channel::<MessageType>();
-        state.lock().await.channels.get_mut(channel).unwrap().peers.insert(addr, tx);
+        state.lock().await.channels.get_mut(&channel).unwrap().peers.insert(addr, tx);
 
         let rx = Box::pin(async_stream::stream! {
             while let Some(item) = rx.recv().await {
@@ -301,14 +290,13 @@ impl Peer {
             }
         });
 
-        let channel = channel.to_owned();
-        Ok(Peer {lines, rx, channel, user: u64::MAX, addr, logged_in: false})
+        Ok(Peer {lines, rx, channel, user: i64::MAX, addr, logged_in: false})
     }
 
-    fn channel(&mut self, new_channel: &String, state: &mut tokio::sync::MutexGuard<'_, Shared>) {
+    fn channel(&mut self, new_channel: i64, state: &mut tokio::sync::MutexGuard<'_, Shared>) {
         let tx = state.channels.get_mut(&self.channel).unwrap().peers.get(&self.addr).unwrap().clone();
         state.channels.get_mut(&self.channel).unwrap().peers.remove(&self.addr);
-        state.channels.get_mut(new_channel).unwrap().peers.insert(self.addr, tx);
+        state.channels.get_mut(&new_channel).unwrap().peers.insert(self.addr, tx);
         self.channel = new_channel.to_owned();
     }
 }
@@ -331,7 +319,13 @@ impl Stream for Peer {
 
         Poll::Ready(match result {
             Some(Ok(message)) => Some(Ok(Message::Broadcast(
-                                         MessageType::Cooked(CookedMessage{content: message, user: self.user.clone()})))),
+                                         MessageType::Cooked(CookedMessage{
+                                            content: message,
+                                            author_uuid: self.user,
+                                            channel_uuid: #
+                                            user: 
+
+                                            })))),
             Some(Err(e)) => Some(Err(e)),
             None => None,
         })
@@ -347,7 +341,7 @@ async fn process_command(msg: &String, state: Arc<Mutex<Shared>>, peer: &mut Pee
     match argv[0] {
         "/get_all_metadata" => {
             let mut meta = json::JsonValue::new_array();
-            for (_k, v) in &state_lock.users {
+            for (_, v) in &state_lock.get_users() {
                 meta.push(v.as_json()).unwrap();
             }
             peer.lines.send(json::object!{command: "metadata", data: meta}.dump()).await?;
@@ -373,14 +367,15 @@ async fn process_command(msg: &String, state: Arc<Mutex<Shared>>, peer: &mut Pee
                     }
                 }
 
-                let uuid: u64 = random();
+                let uuid: i64 = random();
                 let user = User{
                     name: json::stringify(uuid),
                     pfp: pfp,
                     uuid: uuid,
+                    group_uuid: 0,
                 };
 
-                state_lock.users.insert(uuid, user);
+                state_lock.insert_user(user);
                 peer.lines.send(json::object!{"command": "set", "key": "self_uuid", "value": uuid}.dump()).await?;
                 peer.logged_in = true;
                 peer.user = uuid;
@@ -388,7 +383,7 @@ async fn process_command(msg: &String, state: Arc<Mutex<Shared>>, peer: &mut Pee
 
             "/login" => {
                 //log in an existing user
-                let uuid = argv[1].parse::<u64>().unwrap();
+                let uuid = argv[1].parse::<i64>().unwrap();
                 peer.lines.send(json::object!{"command": "set", "key": "self_uuid", "value": uuid}.dump()).await?;
                 peer.user = uuid;
                 peer.logged_in = true;
@@ -407,12 +402,14 @@ async fn process_command(msg: &String, state: Arc<Mutex<Shared>>, peer: &mut Pee
             } else {
                 //let index = state_lock.online.iter().position(|x| *x == peer.user.name).unwrap();
                 //state_lock.online.remove(index);
-                state_lock.users.get_mut(&peer.user).unwrap().name = argv[1].to_string();
-                let meta = json::array![state_lock.users.get_mut(&peer.user).unwrap().as_json()];
-                state_lock.channels.get_mut(&peer.channel).unwrap().broadcast(
+                let mut user = state_lock.get_user(&peer.user);
+                user.name = argv[1].to_string();
+                state_lock.update_user(user);
+                let meta = json::array![state_lock.get_user(&peer.user).as_json()];
+                state_lock.channels.get(&peer.channel).unwrap().broadcast(
                     peer.addr,
                     MessageType::Raw(RawMessage{content: json::object!{command: "metadata", data: meta}.dump()}),
-                    &state_lock.conn).await;
+                    &state_lock.conn);
                 //state_lock.online.push(peer.user.name.clone());
             }
         }
@@ -433,12 +430,13 @@ async fn process_command(msg: &String, state: Arc<Mutex<Shared>>, peer: &mut Pee
             if argv.len() < 2 {
                 peer.lines.send("Usage: /join <[#]channel>").await?;
             } else {
-                peer.channel(&argv[1].to_string(), &mut state_lock);
+                peer.channel(state_lock.get_channel_by_name(&argv[1].to_string()).uuid, &mut state_lock);
             }
         }
 
         "/history" => {
-            let history = &state_lock.channels.get(&peer.channel).unwrap().history;
+            /*
+            let history = &state_lock.channels.get(&peer.channel).unwrap();
             let mut a = argv[1].parse::<usize>().unwrap();
             let mut b = argv[2].parse::<usize>().unwrap();
             if a > history.len() { a = history.len(); }
@@ -451,7 +449,7 @@ async fn process_command(msg: &String, state: Arc<Mutex<Shared>>, peer: &mut Pee
                 res.push(msg.as_json()).unwrap();
             }
             let json_obj = json::object!{history: res};
-            peer.lines.send(&json_obj.dump()).await?;
+            peer.lines.send(&json_obj.dump()).await?;*/
 
         }
 
@@ -460,12 +458,14 @@ async fn process_command(msg: &String, state: Arc<Mutex<Shared>>, peer: &mut Pee
                 peer.lines.send("Usage: /pfp <base64 encoded PNG file>").await?;
                 return Ok(());
             }
-            state_lock.users.get_mut(&peer.user).unwrap().pfp = argv[1].to_string();
-            let meta = json::array![state_lock.users.get_mut(&peer.user).unwrap().as_json()];
-            state_lock.channels.get_mut(&peer.channel).unwrap().broadcast(
+            let mut user = state_lock.get_user(&peer.user);
+            user.pfp = argv[1].to_string();
+            state_lock.update_user(user);
+            let meta = json::array![state_lock.get_users().get_mut(&peer.user).unwrap().as_json()];
+            state_lock.channels.get(&peer.channel).unwrap().broadcast(
                 peer.addr,
                 MessageType::Raw(RawMessage{content: json::object!{command: "metadata", data: meta}.dump()}),
-                &state_lock.conn).await;
+                &state_lock.conn);
 
         }
         //"/createchannel" => {
@@ -482,7 +482,12 @@ async fn process_command(msg: &String, state: Arc<Mutex<Shared>>, peer: &mut Pee
 }
 
 async fn process(state: Arc<Mutex<Shared>>, stream: TlsStream<TcpStream>, addr: SocketAddr) -> Result<(), Box<dyn Error>> {
-    let channel = "#general".to_string();
+    let channel: i64;
+
+    {
+        let mut state = state.lock().await;
+        channel = state.get_channel_by_name(&"#general".to_string()).uuid;
+    }
         /*
     {
         let mut state = state.lock().await;
@@ -490,7 +495,7 @@ async fn process(state: Arc<Mutex<Shared>>, stream: TlsStream<TcpStream>, addr: 
     }*/
 
     let lines = Framed::new(stream, LinesCodec::new());
-    let mut peer = Peer::new(state.clone(), lines, &channel, addr).await?;
+    let mut peer = Peer::new(state.clone(), lines, channel, addr).await?;
     
     while let Some(result) = peer.next().await {
         match result {
@@ -505,7 +510,8 @@ async fn process(state: Arc<Mutex<Shared>>, stream: TlsStream<TcpStream>, addr: 
                         } else {
                             if peer.logged_in {
                                 let mut state_lock = state.lock().await;
-                                state_lock.channels.get_mut(&peer.channel).unwrap().broadcast(addr, MessageType::Cooked(msg), &state_lock.conn).await;
+                                state_lock.channels.get(&peer.channel).unwrap().broadcast(
+                                    addr, MessageType::Cooked(msg), &state_lock.conn);
                             }
                         }
                     }

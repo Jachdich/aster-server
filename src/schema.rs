@@ -1,14 +1,14 @@
 table! {
     channels (uuid) {
-        uuid -> Integer,
+        uuid -> BigInt,
         name -> Text,
     }
 }
 
 table! {
     groups (uuid) {
-        uuid -> Integer,
-        permissions -> Integer,
+        uuid -> BigInt,
+        permissions -> BigInt,
         name -> Text,
         colour -> Integer,
     }
@@ -16,20 +16,20 @@ table! {
 
 table! {
     messages (uuid) {
-        uuid -> Integer,
+        uuid -> BigInt,
         content -> Text,
-        author_uuid -> Integer,
-        channel_uuid -> Integer,
+        author_uuid -> BigInt,
+        channel_uuid -> BigInt,
         date -> Integer,
     }
 }
 
 table! {
     users (uuid) {
-        uuid -> Integer,
+        uuid -> BigInt,
         name -> Text,
         pfp -> Text,
-        group_uuid -> Integer,
+        group_uuid -> BigInt,
     }
 }
 
