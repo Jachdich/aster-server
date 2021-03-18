@@ -320,11 +320,11 @@ impl Stream for Peer {
         Poll::Ready(match result {
             Some(Ok(message)) => Some(Ok(Message::Broadcast(
                                          MessageType::Cooked(CookedMessage{
+                                            uuid: random::<i64>(),
                                             content: message,
                                             author_uuid: self.user,
-                                            channel_uuid: #
-                                            user: 
-
+                                            channel_uuid: self.channel,
+                                            date: 0
                                             })))),
             Some(Err(e)) => Some(Err(e)),
             None => None,

@@ -40,12 +40,20 @@ pub struct Group {
 
 impl CookedMessage {
     pub fn as_json(&self) -> json::JsonValue {
-        return json::object!{content: self.content.clone(), user: self.user};
+        return json::object!{
+            uuid: self.uuid,
+            content: self.content.clone(),
+            author_uuid: self.author_uuid,
+            channel_uuid: self.channel_uuid,
+            date: self.date};
     }
     pub fn from_json(value: &json::JsonValue) -> Self {
         CookedMessage{
+            uuid: value["uuid"].as_i64().unwrap(),
             content: value["content"].to_string(),
-            user: value["user"].as_u64().unwrap(),
+            author_uuid: value["author_uuid"].as_i64().unwrap(),
+            channel_uuid: value["channel_uuid"].as_i64().unwrap(),
+            date: value["date"].as_i32().unwrap(),
         }
     }
 }
