@@ -60,13 +60,14 @@ impl CookedMessage {
 
 impl User {
     pub fn as_json(&self) -> json::JsonValue {
-        return json::object!{name: self.name.clone(), uuid: self.uuid, pfp: self.pfp.clone()};
+        return json::object!{name: self.name.clone(), uuid: self.uuid, pfp: self.pfp.clone(), group_uuid: self.group_uuid};
     }
     pub fn from_json(value: &json::JsonValue) -> Self {
         User {
             name: value["name"].as_str().unwrap().to_string(),
             pfp: value["pfp"].as_str().unwrap().to_string(),
-            uuid: value["uuid"].as_u64().unwrap(),
+            uuid: value["uuid"].as_i64().unwrap(),
+            group_uuid: value["group_uuid"].as_i64().unwrap(),
         }
     }
 }

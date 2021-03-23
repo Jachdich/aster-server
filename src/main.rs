@@ -224,22 +224,46 @@ impl Shared {
     }
 
     fn get_users(&self) -> HashMap<i64, User> {
+        let mut res: HashMap<i64, User> = HashMap::new();
+        let results = schema::users::table.load::<User>(&self.conn).unwrap();
+        for user in results {
+            res.insert(user.uuid, user);
+        }
+        return res;
     }
 
     fn get_user(&self, user: &i64) -> User {
-    }
+        let mut results = schema::users::table
+            .filter(schema::users::uuid.eq(user))
+            .limit(1)
+            .load::<User>(&self.conn)
+            .expect("User does not exist");
 
+        return results.remove(0);
+    }
 //    fn get_channel(&self, channel: &i64) -> Channel {
 
 //    }
 
     fn get_channel_by_name(&self, channel: &String) -> Channel {
+        let mut results = schema::channels::table
+            .filter(schema::channels::name.eq(channel))
+            .limit(1)
+            .load::<Channel>(&self.conn)
+            .expect("Channel does not exist");
+
+        return results.remove(0);
     }
 
     fn insert_user(&self, user: User) {
+        let _ = diesel::insert_into(schema::users::table)
+            .values(&user)
+            .execute(&self.conn)
+            .expect("Error appending to history");
     }
 
     fn update_user(&self, user: User) {
+    
     }
 }
 
