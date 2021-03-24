@@ -223,13 +223,12 @@ impl Shared {
         }
     }
 
-    fn get_users(&self) -> HashMap<i64, User> {
-        let mut res: HashMap<i64, User> = HashMap::new();
-        let results = schema::users::table.load::<User>(&self.conn).unwrap();
-        for user in results {
-            res.insert(user.uuid, user);
-        }
-        return res;
+    fn get_users(&self) -> Vec<User> {
+        return schema::users::table.load::<User>(&self.conn).unwrap();
+    }
+
+    fn get_channels(&self) -> Vec<Channel> {
+        return schema::channels::table.load::<Channel>(&self.conn).unwrap();
     }
 
     fn get_user(&self, user: &i64) -> User {
@@ -241,9 +240,16 @@ impl Shared {
 
         return results.remove(0);
     }
-//    fn get_channel(&self, channel: &i64) -> Channel {
 
-//    }
+    fn get_channel(&self, channel: &i64) -> Channel {
+        let mut results = schema::channels::table
+            .filter(schema::channels::uuid.eq(channel))
+            .limit(1)
+            .load::<Channel>(&self.conn)
+            .expect("Channel does not exist");
+
+        return results.remove(0);
+    }
 
     fn get_channel_by_name(&self, channel: &String) -> Channel {
         let mut results = schema::channels::table
@@ -263,7 +269,12 @@ impl Shared {
     }
 
     fn update_user(&self, user: User) {
-    
+        diesel::update(schema::users::table.find(user.uuid))
+            .set((schema::users::name.eq(user.name),
+            schema::users::pfp.eq(user.pfp),
+            schema::users::group_uuid.eq(user.group_uuid)))
+            .execute(&self.conn)
+            .expect(&format!("Unable to find user {}", user.uuid));
     }
 }
 
@@ -365,7 +376,7 @@ async fn process_command(msg: &String, state: Arc<Mutex<Shared>>, peer: &mut Pee
     match argv[0] {
         "/get_all_metadata" => {
             let mut meta = json::JsonValue::new_array();
-            for (_, v) in &state_lock.get_users() {
+            for v in &state_lock.get_users() {
                 meta.push(v.as_json()).unwrap();
             }
             peer.lines.send(json::object!{command: "metadata", data: meta}.dump()).await?;
@@ -485,7 +496,8 @@ async fn process_command(msg: &String, state: Arc<Mutex<Shared>>, peer: &mut Pee
             let mut user = state_lock.get_user(&peer.user);
             user.pfp = argv[1].to_string();
             state_lock.update_user(user);
-            let meta = json::array![state_lock.get_users().get_mut(&peer.user).unwrap().as_json()];
+
+            let meta = json::array![state_lock.get_user(&peer.user).as_json()];
             state_lock.channels.get(&peer.channel).unwrap().broadcast(
                 peer.addr,
                 MessageType::Raw(RawMessage{content: json::object!{command: "metadata", data: meta}.dump()}),
