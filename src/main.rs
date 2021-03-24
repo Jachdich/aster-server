@@ -131,6 +131,12 @@ fn load(channels: &mut HashMap<i64, SharedChannel>, db: &mut SqliteConnection) {
 async fn main() -> Result<(), Box<dyn Error>> {
 
     let state = Arc::new(Mutex::new(Shared::new()));
+
+    {
+        let mut state = state.lock().await;
+        state.load();
+    }
+    
     let addr = "0.0.0.0:2345".to_string();
     
     let listener = TcpListener::bind(&addr).await?;
@@ -215,11 +221,23 @@ impl Shared {
     fn new() -> Self {
         let mut channels: HashMap<i64, SharedChannel> = HashMap::new();
         let mut sqlitedb = SqliteConnection::establish("aster.db").expect(&format!("Error connecting to the database file {}", "aster.db"));
-        load(&mut channels, &mut sqlitedb);
         Shared {
             channels,
             online: Vec::new(),
             conn: sqlitedb,
+        }
+    }
+
+    fn load(&mut self) {
+        let mut channels = self.get_channels();
+        if channels.len() == 0 {
+            let new_channel = Channel::new("general");
+            self.channels.insert(new_channel.uuid, SharedChannel::new(new_channel.clone()));
+            self.insert_channel(new_channel);
+        } else {
+            for channel in channels {
+                self.channels.insert(channel.uuid, SharedChannel::new(channel));
+            }
         }
     }
 
@@ -261,11 +279,18 @@ impl Shared {
         return results.remove(0);
     }
 
+    fn insert_channel(&self, channel: Channel) {
+        let _ = diesel::insert_into(schema::channels::table)
+            .values(&channel)
+            .execute(&self.conn)
+            .expect("Error appending channel");
+    }
+
     fn insert_user(&self, user: User) {
         let _ = diesel::insert_into(schema::users::table)
             .values(&user)
             .execute(&self.conn)
-            .expect("Error appending to history");
+            .expect("Error appending user");
     }
 
     fn update_user(&self, user: User) {
@@ -522,7 +547,7 @@ async fn process(state: Arc<Mutex<Shared>>, stream: TlsStream<TcpStream>, addr: 
 
     {
         let mut state = state.lock().await;
-        channel = state.get_channel_by_name(&"#general".to_string()).uuid;
+        channel = state.get_channel_by_name(&"general".to_string()).uuid;
     }
         /*
     {

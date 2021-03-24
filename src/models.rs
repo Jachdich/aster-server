@@ -2,6 +2,7 @@ use crate::schema::messages;
 use crate::schema::channels;
 use crate::schema::users;
 use crate::schema::groups;
+use rand::prelude::*;
 
 #[derive(Queryable, Insertable, Clone)]
 #[table_name="channels"]
@@ -36,6 +37,16 @@ pub struct Group {
     pub permissions: i64,
     pub name: String,
     pub colour: i32,
+}
+
+impl Channel {
+    pub fn new(name: &str) -> Self {
+        let uuid: i64 = random();
+        return Channel {
+            uuid: uuid,
+            name: name.to_string(),
+        };
+    }
 }
 
 impl CookedMessage {
