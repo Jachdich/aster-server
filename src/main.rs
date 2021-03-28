@@ -19,7 +19,6 @@ use std::net::SocketAddr;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
-use std::io::Write;
 use std::io::Read;
 use rand::prelude::*;
 
@@ -29,103 +28,6 @@ pub mod models;
 use models::User;
 use models::CookedMessage;
 use models::Channel;
-
-/*
-fn write_channel(fname: &str, channel: &SharedChannel) -> std::io::Result<()> {
-    let mut f = std::fs::File::create(fname)?;
-    f.write_all(channel.as_json().dump().as_bytes())?;
-    f.sync_all()?;
-    Ok(())
-}*/
-
-fn save(state: Arc<Mutex<Shared>>) -> std::io::Result<()> {
-/*
-    let mut channels = json::JsonValue::new_array();
-    let mut users = json::JsonValue::new_object();
-
-    let state = futures::executor::block_on(state.lock());
-    for (name, channel) in &state.channels {
-        write_channel(&format!("{}.json", name), &channel)?;
-        channels.push(name.to_owned()).unwrap();
-    }
-
-    for (uuid, user) in &state.users {
-        users[json::stringify(*uuid)] = user.as_json();
-    }
-    
-    let mut channels_file = std::fs::File::create("channels.json")?;
-    channels_file.write_all(channels.dump().as_bytes())?;
-    channels_file.sync_all()?;
-    let mut users_file = std::fs::File::create("users.json")?;
-    users_file.write_all(users.dump().as_bytes())?;
-    users_file.sync_all()?;*/
-    Ok(())
-}
-
-fn load(channels: &mut HashMap<i64, SharedChannel>, db: &mut SqliteConnection) {
-    
-/*
-    match std::fs::read_to_string("channels.json") {
-        Ok(content) => {
-            match json::parse(&content) {
-                Ok(chan_list) => {
-                    //load the channels
-                    for n in chan_list.members() {
-                        match std::fs::read_to_string(format!("{}.json", n.to_string())) {
-                            Ok(chan_content) => {
-                                match json::parse(&chan_content) {
-                                    Ok(chan_content) => {
-                                        channels.insert(n.to_string(), SharedChannel::from_json(chan_content));
-                                    }
-                                    Err(_e) => {
-                                        channels.insert(n.to_string(), SharedChannel::new());
-                                        println!("Couldn't parse {} channel json file", n.to_string());
-                                    }
-                                }
-                            }
-                            Err(_e) => {
-                                println!("Couldn't read {} channel json file", n.to_string());
-                                channels.insert(n.to_string(), SharedChannel::new());
-                            }
-                        }
-                    }
-                }
-                Err(_e) => {
-                    //default channels
-                    println!("Couldn't parse channels json");
-                    channels.insert("#general".to_string(), SharedChannel::new());
-                }
-            }
-        }
-
-        Err(_e) => {
-            //default channels
-            println!("Couldn't read channels.json");
-            channels.insert("#general".to_string(), SharedChannel::new());
-        }
-    }
-    match std::fs::read_to_string("users.json") {
-        Ok(content) => {
-            match json::parse(&content) {
-                Ok(user_list) => {
-                    //load the channels
-                    for (key, val) in user_list.entries() {
-                        users.insert(key.parse::<u64>().unwrap(), User::from_json(val));
-                    }
-                }
-                Err(_e) => {
-                    //default channels
-                    println!("Couldn't parse users json");
-                }
-            }
-        }
-
-        Err(_e) => {
-            //default channels
-            println!("Couldn't read users.json");
-        }
-    }*/
-}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
@@ -148,12 +50,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
         native_tls::TlsAcceptor::builder(cert).build().unwrap()
     );
 
+/*
     let handler_state = state.clone();
 
     ctrlc::set_handler(move || {
-        save(handler_state.clone()).unwrap();
+        handler_state.save();
         std::process::exit(0); 
-    })?;
+    })?;*/
 
     loop {
         let (stream, addr) = listener.accept().await?;
@@ -197,6 +100,11 @@ impl Group {
     }
 }*/
 
+struct ServerProperties {
+    name: String,
+    pfp: String,
+}
+
 struct SharedChannel {
     peers: HashMap<SocketAddr, Tx>,
     channel: Channel,
@@ -206,6 +114,7 @@ struct Shared {
     channels: HashMap<i64, SharedChannel>,
     online: Vec<i64>,
     conn: SqliteConnection,
+    properties: ServerProperties,
 }
 
 struct Peer {
@@ -217,19 +126,54 @@ struct Peer {
     logged_in: bool,
 }
 
+impl ServerProperties {
+    fn load() -> Self {
+        let mut server_name = String::new();
+        let server_icon: String;
+        
+        let icon_file = std::fs::File::open("icon.png");
+        match icon_file {
+            Ok(mut file) => {
+                let mut buffer = Vec::new();
+                file.read_to_end(&mut buffer).unwrap();
+                server_icon = base64::encode(buffer);
+            }
+            Err(_) => {
+                panic!("Please provide a file icon.png for the server icon");
+            }
+        }
+
+        let name_file = std::fs::File::open("name.txt");
+        match name_file {
+            Ok(mut file) => {
+                file.read_to_string(&mut server_name).unwrap();
+            }
+            Err(_) => {
+                panic!("Please provide a file name.txt with the server name");
+            }
+        }
+
+        ServerProperties {
+            name: server_name,
+            pfp: server_icon
+        }
+    }
+}
+
 impl Shared {
     fn new() -> Self {
-        let mut channels: HashMap<i64, SharedChannel> = HashMap::new();
-        let mut sqlitedb = SqliteConnection::establish("aster.db").expect(&format!("Error connecting to the database file {}", "aster.db"));
+        let channels: HashMap<i64, SharedChannel> = HashMap::new();
+        let sqlitedb = SqliteConnection::establish("aster.db").expect(&format!("Error connecting to the database file {}", "aster.db"));
         Shared {
             channels,
             online: Vec::new(),
             conn: sqlitedb,
+            properties: ServerProperties::load(),
         }
     }
 
     fn load(&mut self) {
-        let mut channels = self.get_channels();
+        let channels = self.get_channels();
         if channels.len() == 0 {
             let new_channel = Channel::new("general");
             self.channels.insert(new_channel.uuid, SharedChannel::new(new_channel.clone()));
@@ -240,6 +184,10 @@ impl Shared {
             }
         }
     }
+
+    // fn save(&mut self) {
+        // 
+    // }
 
     fn get_users(&self) -> Vec<User> {
         return schema::users::table.load::<User>(&self.conn).unwrap();
@@ -407,6 +355,12 @@ async fn process_command(msg: &String, state: Arc<Mutex<Shared>>, peer: &mut Pee
             peer.lines.send(json::object!{command: "metadata", data: meta}.dump()).await?;
         }
 
+        "/get_icon" => {
+            peer.lines.send(json::object!{command: "get_icon", data: state_lock.properties.pfp.to_owned()}.dump()).await?;
+        }
+        "/get_name" => {
+            peer.lines.send(json::object!{command: "get_name", data: state_lock.properties.name.to_owned()}.dump()).await?;
+        }
         _ => {}
     }
 
@@ -546,7 +500,7 @@ async fn process(state: Arc<Mutex<Shared>>, stream: TlsStream<TcpStream>, addr: 
     let channel: i64;
 
     {
-        let mut state = state.lock().await;
+        let state = state.lock().await;
         channel = state.get_channel_by_name(&"general".to_string()).uuid;
     }
         /*
@@ -570,13 +524,13 @@ async fn process(state: Arc<Mutex<Shared>>, stream: TlsStream<TcpStream>, addr: 
                             process_command(&msg.content, state.clone(), &mut peer).await?;
                         } else {
                             if peer.logged_in {
-                                let mut state_lock = state.lock().await;
+                                let state_lock = state.lock().await;
                                 state_lock.channels.get(&peer.channel).unwrap().broadcast(
                                     addr, MessageType::Cooked(msg), &state_lock.conn);
                             }
                         }
                     }
-                    MessageType::Raw(msg) => {
+                    MessageType::Raw(_msg) => {
                         //this doesn't make sense
                     }
                 }
