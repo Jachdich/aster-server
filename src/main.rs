@@ -151,6 +151,7 @@ impl ServerProperties {
         match name_file {
             Ok(mut file) => {
                 file.read_to_string(&mut server_name).unwrap();
+                server_name.pop();
             }
             Err(_) => {
                 panic!("Please provide a file name.txt with the server name");
