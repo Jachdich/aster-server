@@ -39,9 +39,13 @@ pub struct Group {
     pub colour: i32,
 }
 
+fn gen_uuid() -> i64 {
+    (random::<u64>() >> 1) as i64
+}
+
 impl Channel {
     pub fn new(name: &str) -> Self {
-        let uuid: i64 = random();
+        let uuid: i64 = gen_uuid();
         return Channel {
             uuid: uuid,
             name: name.to_string(),

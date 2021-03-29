@@ -74,6 +74,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
     
 }
 
+fn gen_uuid() -> i64 {
+    (random::<u64>() >> 1) as i64
+}
+
 type Tx = mpsc::UnboundedSender<MessageType>;
 
 #[derive(Clone)]
@@ -328,7 +332,7 @@ impl Stream for Peer {
         Poll::Ready(match result {
             Some(Ok(message)) => Some(Ok(Message::Broadcast(
                                          MessageType::Cooked(CookedMessage{
-                                            uuid: random::<i64>(),
+                                            uuid: gen_uuid(),
                                             content: message,
                                             author_uuid: self.user,
                                             channel_uuid: self.channel,
@@ -338,6 +342,14 @@ impl Stream for Peer {
             None => None,
         })
     }
+}
+
+fn send_metadata(state_lock: &tokio::sync::MutexGuard<'_, Shared>, peer: &Peer) {
+    let meta = json::array![state_lock.get_user(&peer.user).as_json()];
+    state_lock.channels.get(&peer.channel).unwrap().broadcast(
+        peer.addr,
+        MessageType::Raw(RawMessage{content: json::object!{command: "metadata", data: meta}.dump()}),
+        &state_lock.conn);
 }
 
 async fn process_command(msg: &String, state: Arc<Mutex<Shared>>, peer: &mut Peer) -> Result<(), Box<dyn Error>> {
@@ -381,7 +393,7 @@ async fn process_command(msg: &String, state: Arc<Mutex<Shared>>, peer: &mut Pee
                     }
                 }
 
-                let uuid: i64 = random();
+                let uuid = gen_uuid();
                 let user = User{
                     name: json::stringify(uuid),
                     pfp: pfp,
@@ -393,6 +405,7 @@ async fn process_command(msg: &String, state: Arc<Mutex<Shared>>, peer: &mut Pee
                 peer.lines.send(json::object!{"command": "set", "key": "self_uuid", "value": uuid}.dump()).await?;
                 peer.logged_in = true;
                 peer.user = uuid;
+                send_metadata(&state_lock, peer);
             }
 
             "/login" => {
@@ -401,6 +414,8 @@ async fn process_command(msg: &String, state: Arc<Mutex<Shared>>, peer: &mut Pee
                 peer.lines.send(json::object!{"command": "set", "key": "self_uuid", "value": uuid}.dump()).await?;
                 peer.user = uuid;
                 peer.logged_in = true;
+                
+                send_metadata(&state_lock, peer);
             }
 
             _ => {}
@@ -419,11 +434,7 @@ async fn process_command(msg: &String, state: Arc<Mutex<Shared>>, peer: &mut Pee
                 let mut user = state_lock.get_user(&peer.user);
                 user.name = argv[1].to_string();
                 state_lock.update_user(user);
-                let meta = json::array![state_lock.get_user(&peer.user).as_json()];
-                state_lock.channels.get(&peer.channel).unwrap().broadcast(
-                    peer.addr,
-                    MessageType::Raw(RawMessage{content: json::object!{command: "metadata", data: meta}.dump()}),
-                    &state_lock.conn);
+                send_metadata(&state_lock, peer);
                 //state_lock.online.push(peer.user.name.clone());
             }
         }
@@ -449,21 +460,19 @@ async fn process_command(msg: &String, state: Arc<Mutex<Shared>>, peer: &mut Pee
         }
 
         "/history" => {
-            /*
-            let history = &state_lock.channels.get(&peer.channel).unwrap();
-            let mut a = argv[1].parse::<usize>().unwrap();
-            let mut b = argv[2].parse::<usize>().unwrap();
-            if a > history.len() { a = history.len(); }
-            if b > history.len() { b = history.len(); }
-
+            let mut a = argv[1].parse::<i64>().unwrap();
+            //let mut b = argv[2].parse::<usize>().unwrap();
+            //if a > history.len() { a = history.len(); }
+            //if b > history.len() { b = history.len(); }
+            let history = schema::messages::table.limit(a).load::<CookedMessage>(&state_lock.conn).unwrap();
             let mut res = json::JsonValue::new_array();
 
-            for msg in history[history.len() - b..history.len() - a].iter() {
+            for msg in history.iter() {
                 //peer.lines.send(msg).await;
                 res.push(msg.as_json()).unwrap();
             }
             let json_obj = json::object!{history: res};
-            peer.lines.send(&json_obj.dump()).await?;*/
+            peer.lines.send(&json_obj.dump()).await?;
 
         }
 
@@ -476,11 +485,7 @@ async fn process_command(msg: &String, state: Arc<Mutex<Shared>>, peer: &mut Pee
             user.pfp = argv[1].to_string();
             state_lock.update_user(user);
 
-            let meta = json::array![state_lock.get_user(&peer.user).as_json()];
-            state_lock.channels.get(&peer.channel).unwrap().broadcast(
-                peer.addr,
-                MessageType::Raw(RawMessage{content: json::object!{command: "metadata", data: meta}.dump()}),
-                &state_lock.conn);
+            send_metadata(&state_lock, peer);
 
         }
         //"/createchannel" => {
