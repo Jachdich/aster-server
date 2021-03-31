@@ -11,9 +11,20 @@ pub struct Channel {
     pub name: String,
 }
 
-#[derive(Queryable, Insertable, Clone)]
-#[table_name="messages"]
+#[derive(Queryable, Clone)]
+//#[table_name="messages"]
 pub struct CookedMessage {
+    pub uuid: i64,
+    pub content: String,
+    pub author_uuid: i64,
+    pub channel_uuid: i64,
+    pub date: i32,
+    pub rowid: i64,
+}
+
+#[derive(Insertable, Clone)]
+#[table_name="messages"]
+pub struct CookedMessageInsertable {
     pub uuid: i64,
     pub content: String,
     pub author_uuid: i64,
@@ -43,6 +54,18 @@ fn gen_uuid() -> i64 {
     (random::<u64>() >> 1) as i64
 }
 
+impl CookedMessageInsertable {
+    pub fn new(msg: CookedMessage) -> Self {
+        return Self {
+            uuid: msg.uuid,
+            content: msg.content,
+            author_uuid: msg.author_uuid,
+            channel_uuid: msg.channel_uuid,
+            date: msg.date,
+        };
+    }
+}
+
 impl Channel {
     pub fn new(name: &str) -> Self {
         let uuid: i64 = gen_uuid();
@@ -69,6 +92,7 @@ impl CookedMessage {
             author_uuid: value["author_uuid"].as_i64().unwrap(),
             channel_uuid: value["channel_uuid"].as_i64().unwrap(),
             date: value["date"].as_i32().unwrap(),
+            rowid: 0,
         }
     }
 }

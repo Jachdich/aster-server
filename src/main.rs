@@ -284,8 +284,9 @@ impl SharedChannel {
     }
 
     fn add_to_history(&self, msg: CookedMessage, conn: &SqliteConnection) {
+        let new_msg = models::CookedMessageInsertable::new(msg);
         let _ = diesel::insert_into(schema::messages::table)
-            .values(&msg)
+            .values(&new_msg)
             .execute(conn)
             .expect("Error appending to history");
     }
@@ -337,7 +338,8 @@ impl Stream for Peer {
                                             content: message,
                                             author_uuid: self.user,
                                             channel_uuid: self.channel,
-                                            date: 0
+                                            date: 0,
+                                            rowid: 0,
                                             })))),
             Some(Err(e)) => Some(Err(e)),
             None => None,
@@ -465,7 +467,8 @@ async fn process_command(msg: &String, state: Arc<Mutex<Shared>>, peer: &mut Pee
             //let mut b = argv[2].parse::<usize>().unwrap();
             //if a > history.len() { a = history.len(); }
             //if b > history.len() { b = history.len(); }
-            let history = schema::messages::table.limit(a).load::<CookedMessage>(&state_lock.conn).unwrap();
+            let mut history = schema::messages::table.order(schema::messages::rowid.desc()).limit(a).load::<CookedMessage>(&state_lock.conn).unwrap();
+            history.reverse();
             let mut res = json::JsonValue::new_array();
 
             for msg in history.iter() {
