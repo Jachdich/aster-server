@@ -476,7 +476,7 @@ async fn process_command(msg: &String, state: Arc<Mutex<Shared>>, peer: &mut Pee
             //let mut b = argv[2].parse::<usize>().unwrap();
             //if a > history.len() { a = history.len(); }
             //if b > history.len() { b = history.len(); }
-            let mut history = schema::messages::table.order(schema::messages::rowid.desc()).limit(a).load::<CookedMessage>(&state_lock.conn).unwrap();
+            let mut history = schema::messages::table.filter(schema::messages::channel_uuid.eq(peer.channel)).order(schema::messages::rowid.desc()).limit(a).load::<CookedMessage>(&state_lock.conn).unwrap();
             history.reverse();
             let mut res = json::JsonValue::new_array();
 
