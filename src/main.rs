@@ -500,6 +500,13 @@ async fn process_command(msg: &String, state: Arc<Mutex<Shared>>, peer: &mut Pee
         "/leave" => {
             ()
         }
+
+        "/delete" => {
+            let uuid = argv[1].parse::<i64>().unwrap();
+            diesel::delete(schema::users::table.filter(schema::users::uuid.eq(uuid))).execute(&state_lock.conn).unwrap();
+            diesel::delete(schema::messages::table.filter(
+                schema::messages::author_uuid.eq(uuid))).execute(&state_lock.conn).unwrap();
+        }
         _ => ()
     }
     Ok(())
