@@ -376,6 +376,15 @@ async fn process_command(msg: &String, state: Arc<Mutex<Shared>>, peer: &mut Pee
         "/get_name" => {
             peer.lines.send(json::object!{command: "get_name", data: state_lock.properties.name.to_owned()}.dump()).await?;
         }
+        "/get_channels" => {
+            let mut res = json::JsonValue::new_array();
+            let channels = state_lock.get_channels();
+            for channel in channels {
+                res.push(channel.name).unwrap();
+            }
+            
+            peer.lines.send(json::object!{command: "get_channels", data: res}.dump()).await?;
+        }
         _ => {}
     }
 
