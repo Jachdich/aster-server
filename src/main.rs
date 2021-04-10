@@ -15,7 +15,7 @@ use futures::SinkExt;
 use std::collections::HashMap;
 use std::error::Error;
 use std::io;
-use std::net::SocketAddr;
+use std::net::{SocketAddr, IpAddr, Ipv4Addr};
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
@@ -190,6 +190,17 @@ impl Shared {
         }
     }
 
+    fn broadcast_unread(&self, target_channel: i64, why_the_fuck_do_i_need_this: &tokio::sync::MutexGuard<'_, Shared>) {
+    	for (uuid, channel) in &self.channels {
+    		if uuid != &target_channel {
+    			channel.broadcast(SocketAddr::new(IpAddr::V4(Ipv4Addr::new(255, 255, 255, 255)), 0),
+    			MessageType::Raw(RawMessage{
+    				content: json::object!{command: "unread", channel: channel.channel.name.to_owned()}.dump()
+    			}), why_the_fuck_do_i_need_this);
+    		}
+    	}
+    }
+
     // fn save(&mut self) {
         // 
     // }
@@ -264,15 +275,16 @@ impl SharedChannel {
         }
     }
 
-    fn broadcast(&self, sender: SocketAddr, message: MessageType, conn: &SqliteConnection) {
+    fn broadcast(&self, sender: SocketAddr, message: MessageType, state: &tokio::sync::MutexGuard<'_, Shared>) {
         match &message {
             MessageType::Cooked(msg) => {
-                self.add_to_history(msg.clone(), conn);
+                self.add_to_history(msg.clone(), &state.conn);
                 for peer in self.peers.iter() {
                     if *peer.0 != sender {
                         let _ = peer.1.send(message.clone());
                     }
                 }
+                state.broadcast_unread(self.channel.uuid, state);
 
             }
             MessageType::Raw(_) => {
@@ -352,7 +364,7 @@ fn send_metadata(state_lock: &tokio::sync::MutexGuard<'_, Shared>, peer: &Peer) 
     state_lock.channels.get(&peer.channel).unwrap().broadcast(
         peer.addr,
         MessageType::Raw(RawMessage{content: json::object!{command: "metadata", data: meta}.dump()}),
-        &state_lock.conn);
+        &state_lock);
 }
 
 async fn process_command(msg: &String, state: Arc<Mutex<Shared>>, peer: &mut Peer) -> Result<(), Box<dyn Error>> {
@@ -472,7 +484,7 @@ async fn process_command(msg: &String, state: Arc<Mutex<Shared>>, peer: &mut Pee
         }
 
         "/history" => {
-            let mut a = argv[1].parse::<i64>().unwrap();
+            let a = argv[1].parse::<i64>().unwrap();
             //let mut b = argv[2].parse::<usize>().unwrap();
             //if a > history.len() { a = history.len(); }
             //if b > history.len() { b = history.len(); }
@@ -551,7 +563,7 @@ async fn process(state: Arc<Mutex<Shared>>, stream: TlsStream<TcpStream>, addr: 
                             if peer.logged_in {
                                 let state_lock = state.lock().await;
                                 state_lock.channels.get(&peer.channel).unwrap().broadcast(
-                                    addr, MessageType::Cooked(msg), &state_lock.conn);
+                                    addr, MessageType::Cooked(msg), &state_lock);
                             }
                         }
                     }
