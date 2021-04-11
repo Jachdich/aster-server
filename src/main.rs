@@ -191,11 +191,12 @@ impl Shared {
     }
 
     fn broadcast_unread(&self, target_channel: i64, why_the_fuck_do_i_need_this: &tokio::sync::MutexGuard<'_, Shared>) {
+    	let name = self.channels.get(&target_channel).unwrap().channel.name.to_owned();
     	for (uuid, channel) in &self.channels {
     		if uuid != &target_channel {
     			channel.broadcast(SocketAddr::new(IpAddr::V4(Ipv4Addr::new(255, 255, 255, 255)), 0),
     			MessageType::Raw(RawMessage{
-    				content: json::object!{command: "unread", channel: channel.channel.name.to_owned()}.dump()
+    				content: json::object!{command: "unread", channel: name.to_owned()}.dump()
     			}), why_the_fuck_do_i_need_this);
     		}
     	}
