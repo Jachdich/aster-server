@@ -202,6 +202,13 @@ impl Shared {
     	}
     }
 
+    fn broadcast_to_all(&self, message: MessageType, why_the_fuck_do_i_need_this: &tokio::sync::MutexGuard<'_, Shared>) {
+    	for (_uuid, channel) in &self.channels {
+			channel.broadcast(SocketAddr::new(IpAddr::V4(Ipv4Addr::new(255, 255, 255, 255)), 0),
+			message.clone(), why_the_fuck_do_i_need_this);
+     	}
+    }
+
     // fn save(&mut self) {
         // 
     // }
@@ -368,6 +375,18 @@ fn send_metadata(state_lock: &tokio::sync::MutexGuard<'_, Shared>, peer: &Peer) 
         &state_lock);
 }
 
+fn send_online(state_lock: &tokio::sync::MutexGuard<'_, Shared>) {
+    let mut res = json::JsonValue::new_array();
+    for user in state_lock.online.iter() {
+        res.push(user + 0).unwrap();
+    }
+    let final_json = json::object!{
+        command: "online",
+        data: res,
+    };
+    state_lock.broadcast_to_all(MessageType::Raw(RawMessage{content: final_json.dump()}), state_lock);
+}
+
 async fn process_command(msg: &String, state: Arc<Mutex<Shared>>, peer: &mut Peer) -> Result<(), Box<dyn Error>> {
     let split = msg.split(" ");
     let argv = split.collect::<Vec<&str>>();
@@ -430,7 +449,9 @@ async fn process_command(msg: &String, state: Arc<Mutex<Shared>>, peer: &mut Pee
                 peer.lines.send(json::object!{"command": "set", "key": "self_uuid", "value": uuid}.dump()).await?;
                 peer.logged_in = true;
                 peer.user = uuid;
+                state_lock.online.push(peer.user);
                 send_metadata(&state_lock, peer);
+                send_online(&state_lock);
             }
 
             "/login" => {
@@ -439,8 +460,10 @@ async fn process_command(msg: &String, state: Arc<Mutex<Shared>>, peer: &mut Pee
                 peer.lines.send(json::object!{"command": "set", "key": "self_uuid", "value": uuid}.dump()).await?;
                 peer.user = uuid;
                 peer.logged_in = true;
-                
+
+                state_lock.online.push(peer.user);
                 send_metadata(&state_lock, peer);
+                send_online(&state_lock);
             }
 
             _ => {}
@@ -464,16 +487,16 @@ async fn process_command(msg: &String, state: Arc<Mutex<Shared>>, peer: &mut Pee
             }
         }
         
-        "/list" => {
-            /*
+        "/online" => {
             let mut res = json::JsonValue::new_array();
             for user in state_lock.online.iter() {
-                res.push(user).unwrap();
+                res.push(user + 0).unwrap();
             }
             let final_json = json::object!{
-                res: res,
+                command: "online",
+                data: res,
             };
-            peer.lines.send(&final_json.dump()).await?;*/
+            peer.lines.send(&final_json.dump()).await?;
         }
 
         "/join" => {
@@ -536,17 +559,10 @@ async fn process_command(msg: &String, state: Arc<Mutex<Shared>>, peer: &mut Pee
 
 async fn process(state: Arc<Mutex<Shared>>, stream: TlsStream<TcpStream>, addr: SocketAddr) -> Result<(), Box<dyn Error>> {
     let channel: i64;
-
     {
         let state = state.lock().await;
         channel = state.get_channel_by_name(&"general".to_string()).uuid;
     }
-        /*
-    {
-        let mut state = state.lock().await;
-        state.online.push(uname.clone());
-    }*/
-
     let lines = Framed::new(stream, LinesCodec::new());
     let mut peer = Peer::new(state.clone(), lines, channel, addr).await?;
     
@@ -587,6 +603,13 @@ async fn process(state: Arc<Mutex<Shared>>, stream: TlsStream<TcpStream>, addr: 
 
             Err(e) => { println!("Error lmao u figure it out: {}", e); }
         }
+    }
+
+    if peer.user != i64::MAX {
+        let mut state = state.lock().await;
+        let index = state.online.iter().position(|x| *x == peer.user).unwrap();
+        state.online.remove(index);
+        send_online(&state);
     }
 
     Ok(())
