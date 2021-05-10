@@ -11,6 +11,10 @@ use tokio_util::codec::{Framed, LinesCodec};
 extern crate diesel;
 use diesel::prelude::*;
 
+extern crate num;
+#[macro_use]
+extern crate num_derive;
+
 use futures::SinkExt;
 use std::error::Error;
 use std::net::SocketAddr;
@@ -25,6 +29,7 @@ pub mod sharedchannel;
 pub mod message;
 pub mod peer;
 pub mod helper;
+pub mod permissions;
 
 use models::User;
 use message::*;
@@ -32,9 +37,20 @@ use peer::Peer;
 use shared::Shared;
 use helper::gen_uuid;
 
+use permissions::*;
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
 
+    let mut p: i64 = 0;
+    p = set_perm(p, Permission::ModifyChannel);
+    println!("{}", p);
+    p = set_perm(p, Permission::Root);
+    println!("{}", p);
+    println!("{} {}", has_perm(p, Permission::ModifyChannel), has_perm(p, Permission::Root));
+    p = reset_perm(p, Permission::Root);
+    println!("{} {}", p, has_perm(p, Permission::Root));
+    
     let state = Arc::new(Mutex::new(Shared::new()));
 
     {

@@ -1,6 +1,4 @@
-extern crate num;
-#[macro_use]
-extern crate num_derive;
+
 
 #[derive(FromPrimitive)]
 pub enum Permission {
@@ -17,5 +15,13 @@ pub enum Permission {
 }
 
 pub fn has_perm(perms: i64, perm: Permission) -> bool {
-    (perms >> (perm as u8)) & 0b1
+    ((perms >> (perm as u8)) & 0b1) != 0
+}
+
+pub fn set_perm(perms: i64, perm: Permission) -> i64 {
+    perms | (1 << perm as u8)
+}
+
+pub fn reset_perm(perms: i64, perm: Permission) -> i64 {
+    perms & !(1 << perm as u8)
 }
