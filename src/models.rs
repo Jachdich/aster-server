@@ -1,7 +1,7 @@
-use crate::schema::messages;
 use crate::schema::channels;
 use crate::schema::users;
 use crate::schema::groups;
+use crate::schema::user_groups;
 use rand::prelude::*;
 
 #[derive(Queryable, Insertable, Clone)]
@@ -11,26 +11,7 @@ pub struct Channel {
     pub name: String,
 }
 
-#[derive(Queryable, Clone)]
-//#[table_name="messages"]
-pub struct CookedMessage {
-    pub uuid: i64,
-    pub content: String,
-    pub author_uuid: i64,
-    pub channel_uuid: i64,
-    pub date: i32,
-    pub rowid: i64,
-}
-
-#[derive(Insertable, Clone)]
-#[table_name="messages"]
-pub struct CookedMessageInsertable {
-    pub uuid: i64,
-    pub content: String,
-    pub author_uuid: i64,
-    pub channel_uuid: i64,
-    pub date: i32,
-}
+//message.rs for message models
 
 #[derive(Queryable, Insertable, Clone)]
 #[table_name="users"]
@@ -50,51 +31,16 @@ pub struct Group {
     pub colour: i32,
 }
 
+#[derive(Queryable, Insertable, Clone)]
+#[table_name="user_groups"]
+pub struct UserGroupConnection {
+    link_id: i32,
+    pub user_uuid: i64,
+    pub group_uuid: i64,
+}
+
 fn gen_uuid() -> i64 {
     (random::<u64>() >> 1) as i64
-}
-
-impl CookedMessageInsertable {
-    pub fn new(msg: CookedMessage) -> Self {
-        return Self {
-            uuid: msg.uuid,
-            content: msg.content,
-            author_uuid: msg.author_uuid,
-            channel_uuid: msg.channel_uuid,
-            date: msg.date,
-        };
-    }
-}
-
-impl Channel {
-    pub fn new(name: &str) -> Self {
-        let uuid: i64 = gen_uuid();
-        return Channel {
-            uuid: uuid,
-            name: name.to_string(),
-        };
-    }
-}
-
-impl CookedMessage {
-    pub fn as_json(&self) -> json::JsonValue {
-        return json::object!{
-            uuid: self.uuid,
-            content: self.content.clone(),
-            author_uuid: self.author_uuid,
-            channel_uuid: self.channel_uuid,
-            date: self.date};
-    }
-    pub fn from_json(value: &json::JsonValue) -> Self {
-        CookedMessage{
-            uuid: value["uuid"].as_i64().unwrap(),
-            content: value["content"].to_string(),
-            author_uuid: value["author_uuid"].as_i64().unwrap(),
-            channel_uuid: value["channel_uuid"].as_i64().unwrap(),
-            date: value["date"].as_i32().unwrap(),
-            rowid: 0,
-        }
-    }
 }
 
 impl User {
@@ -108,5 +54,15 @@ impl User {
             uuid: value["uuid"].as_i64().unwrap(),
             group_uuid: value["group_uuid"].as_i64().unwrap(),
         }
+    }
+}
+
+impl Channel {
+    pub fn new(name: &str) -> Self {
+        let uuid: i64 = gen_uuid();
+        return Channel {
+            uuid: uuid,
+            name: name.to_string(),
+        };
     }
 }

@@ -26,6 +26,14 @@ table! {
 }
 
 table! {
+    user_groups (link_id) {
+        link_id -> Nullable<Integer>,
+        user_uuid -> BigInt,
+        group_uuid -> BigInt,
+    }
+}
+
+table! {
     users (uuid) {
         uuid -> BigInt,
         name -> Text,
@@ -36,11 +44,14 @@ table! {
 
 joinable!(messages -> channels (channel_uuid));
 joinable!(messages -> users (author_uuid));
+joinable!(user_groups -> groups (group_uuid));
+joinable!(user_groups -> users (user_uuid));
 joinable!(users -> groups (group_uuid));
 
 allow_tables_to_appear_in_same_query!(
     channels,
     groups,
     messages,
+    user_groups,
     users,
 );

@@ -2,32 +2,35 @@ extern crate tokio;
 extern crate ctrlc;
 
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::{mpsc, Mutex};
-use tokio_stream::{Stream, StreamExt};
-use tokio_util::codec::{Framed, LinesCodec, LinesCodecError};
+use tokio::sync::Mutex;
+use tokio_stream::StreamExt;
 use tokio_native_tls::{TlsStream};
+use tokio_util::codec::{Framed, LinesCodec};
 
 #[macro_use]
 extern crate diesel;
 use diesel::prelude::*;
 
 use futures::SinkExt;
-use std::collections::HashMap;
 use std::error::Error;
-use std::io;
-use std::net::{SocketAddr, IpAddr, Ipv4Addr};
-use std::pin::Pin;
+use std::net::SocketAddr;
 use std::sync::Arc;
-use std::task::{Context, Poll};
 use std::io::Read;
-use rand::prelude::*;
 
 pub mod schema;
 pub mod models;
+pub mod shared;
+pub mod serverproperties;
+pub mod sharedchannel;
+pub mod message;
+pub mod peer;
+pub mod helper;
 
 use models::User;
-use models::CookedMessage;
-use models::Channel;
+use message::*;
+use peer::Peer;
+use shared::Shared;
+use helper::gen_uuid;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
@@ -73,24 +76,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
     }
     
 }
-
-fn gen_uuid() -> i64 {
-    (random::<u64>() >> 1) as i64
-}
-
-type Tx = mpsc::UnboundedSender<MessageType>;
-
-#[derive(Clone)]
-struct RawMessage {
-    content: String,
-}
-
-#[derive(Clone)]
-enum MessageType {
-    Raw(RawMessage),
-    Cooked(CookedMessage),
-}
-
 /*
 impl Group {
     fn as_json(&self) -> json::JsonValue {
@@ -103,269 +88,6 @@ impl Group {
         }
     }
 }*/
-
-struct ServerProperties {
-    name: String,
-    pfp: String,
-}
-
-struct SharedChannel {
-    peers: HashMap<SocketAddr, Tx>,
-    channel: Channel,
-}
-
-struct Shared {
-    channels: HashMap<i64, SharedChannel>,
-    online: Vec<i64>,
-    conn: SqliteConnection,
-    properties: ServerProperties,
-}
-
-struct Peer {
-    lines: Framed<TlsStream<TcpStream>, LinesCodec>,
-    rx: Pin<Box<dyn Stream<Item = MessageType> + Send>>,
-    channel: i64,
-    user: i64,
-    addr: SocketAddr,
-    logged_in: bool,
-}
-
-impl ServerProperties {
-    fn load() -> Self {
-        let mut server_name = String::new();
-        let server_icon: String;
-        
-        let icon_file = std::fs::File::open("icon.png");
-        match icon_file {
-            Ok(mut file) => {
-                let mut buffer = Vec::new();
-                file.read_to_end(&mut buffer).unwrap();
-                server_icon = base64::encode(buffer);
-            }
-            Err(_) => {
-                panic!("Please provide a file icon.png for the server icon");
-            }
-        }
-
-        let name_file = std::fs::File::open("name.txt");
-        match name_file {
-            Ok(mut file) => {
-                file.read_to_string(&mut server_name).unwrap();
-                server_name.pop();
-            }
-            Err(_) => {
-                panic!("Please provide a file name.txt with the server name");
-            }
-        }
-
-        ServerProperties {
-            name: server_name,
-            pfp: server_icon
-        }
-    }
-}
-
-impl Shared {
-    fn new() -> Self {
-        let channels: HashMap<i64, SharedChannel> = HashMap::new();
-        let sqlitedb = SqliteConnection::establish("aster.db").expect(&format!("Error connecting to the database file {}", "aster.db"));
-        Shared {
-            channels,
-            online: Vec::new(),
-            conn: sqlitedb,
-            properties: ServerProperties::load(),
-        }
-    }
-
-    fn load(&mut self) {
-        let channels = self.get_channels();
-        if channels.len() == 0 {
-            let new_channel = Channel::new("general");
-            self.channels.insert(new_channel.uuid, SharedChannel::new(new_channel.clone()));
-            self.insert_channel(new_channel);
-        } else {
-            for channel in channels {
-                self.channels.insert(channel.uuid, SharedChannel::new(channel));
-            }
-        }
-    }
-
-    fn broadcast_unread(&self, target_channel: i64, why_the_fuck_do_i_need_this: &tokio::sync::MutexGuard<'_, Shared>) {
-    	let name = self.channels.get(&target_channel).unwrap().channel.name.to_owned();
-    	for (uuid, channel) in &self.channels {
-    		if uuid != &target_channel {
-    			channel.broadcast(SocketAddr::new(IpAddr::V4(Ipv4Addr::new(255, 255, 255, 255)), 0),
-    			MessageType::Raw(RawMessage{
-    				content: json::object!{command: "unread", channel: name.to_owned()}.dump()
-    			}), why_the_fuck_do_i_need_this);
-    		}
-    	}
-    }
-
-    fn broadcast_to_all(&self, message: MessageType, why_the_fuck_do_i_need_this: &tokio::sync::MutexGuard<'_, Shared>) {
-    	for (_uuid, channel) in &self.channels {
-			channel.broadcast(SocketAddr::new(IpAddr::V4(Ipv4Addr::new(255, 255, 255, 255)), 0),
-			message.clone(), why_the_fuck_do_i_need_this);
-     	}
-    }
-
-    // fn save(&mut self) {
-        // 
-    // }
-
-    fn get_users(&self) -> Vec<User> {
-        return schema::users::table.load::<User>(&self.conn).unwrap();
-    }
-
-    fn get_channels(&self) -> Vec<Channel> {
-        return schema::channels::table.load::<Channel>(&self.conn).unwrap();
-    }
-
-    fn get_user(&self, user: &i64) -> User {
-        let mut results = schema::users::table
-            .filter(schema::users::uuid.eq(user))
-            .limit(1)
-            .load::<User>(&self.conn)
-            .expect("User does not exist");
-
-        return results.remove(0);
-    }
-
-    fn get_channel(&self, channel: &i64) -> Channel {
-        let mut results = schema::channels::table
-            .filter(schema::channels::uuid.eq(channel))
-            .limit(1)
-            .load::<Channel>(&self.conn)
-            .expect("Channel does not exist");
-
-        return results.remove(0);
-    }
-
-    fn get_channel_by_name(&self, channel: &String) -> Channel {
-        let mut results = schema::channels::table
-            .filter(schema::channels::name.eq(channel))
-            .limit(1)
-            .load::<Channel>(&self.conn)
-            .expect("Channel does not exist");
-
-        return results.remove(0);
-    }
-
-    fn insert_channel(&self, channel: Channel) {
-        let _ = diesel::insert_into(schema::channels::table)
-            .values(&channel)
-            .execute(&self.conn)
-            .expect("Error appending channel");
-    }
-
-    fn insert_user(&self, user: User) {
-        let _ = diesel::insert_into(schema::users::table)
-            .values(&user)
-            .execute(&self.conn)
-            .expect("Error appending user");
-    }
-
-    fn update_user(&self, user: User) {
-        diesel::update(schema::users::table.find(user.uuid))
-            .set((schema::users::name.eq(user.name),
-            schema::users::pfp.eq(user.pfp),
-            schema::users::group_uuid.eq(user.group_uuid)))
-            .execute(&self.conn)
-            .expect(&format!("Unable to find user {}", user.uuid));
-    }
-}
-
-impl SharedChannel {
-    fn new(channel: Channel) -> Self {
-        SharedChannel {
-            peers: HashMap::new(),
-            channel,             
-        }
-    }
-
-    fn broadcast(&self, sender: SocketAddr, message: MessageType, state: &tokio::sync::MutexGuard<'_, Shared>) {
-        match &message {
-            MessageType::Cooked(msg) => {
-                self.add_to_history(msg.clone(), &state.conn);
-                for peer in self.peers.iter() {
-                    if *peer.0 != sender {
-                        let _ = peer.1.send(message.clone());
-                    }
-                }
-                state.broadcast_unread(self.channel.uuid, state);
-
-            }
-            MessageType::Raw(_) => {
-                for peer in self.peers.iter() {
-                    let _ = peer.1.send(message.clone());
-                }
-            }
-        }
-    }
-
-    fn add_to_history(&self, msg: CookedMessage, conn: &SqliteConnection) {
-        let new_msg = models::CookedMessageInsertable::new(msg);
-        let _ = diesel::insert_into(schema::messages::table)
-            .values(&new_msg)
-            .execute(conn)
-            .expect("Error appending to history");
-    }
-}
-
-impl Peer {
-    async fn new(state: Arc<Mutex<Shared>>, lines: Framed<TlsStream<TcpStream>, LinesCodec>, channel: i64, addr: SocketAddr
-    ) -> io::Result<Peer> {
-        let (tx, mut rx) = mpsc::unbounded_channel::<MessageType>();
-        state.lock().await.channels.get_mut(&channel).unwrap().peers.insert(addr, tx);
-
-        let rx = Box::pin(async_stream::stream! {
-            while let Some(item) = rx.recv().await {
-                yield item;
-            }
-        });
-
-        Ok(Peer {lines, rx, channel, user: i64::MAX, addr, logged_in: false})
-    }
-
-    fn channel(&mut self, new_channel: i64, state: &mut tokio::sync::MutexGuard<'_, Shared>) {
-        let tx = state.channels.get_mut(&self.channel).unwrap().peers.get(&self.addr).unwrap().clone();
-        state.channels.get_mut(&self.channel).unwrap().peers.remove(&self.addr);
-        state.channels.get_mut(&new_channel).unwrap().peers.insert(self.addr, tx);
-        self.channel = new_channel.to_owned();
-    }
-}
-
-enum Message {
-    Broadcast(MessageType),
-    Received(MessageType),
-}
-
-impl Stream for Peer {
-    type Item = Result<Message, LinesCodecError>;
-
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-
-        if let Poll::Ready(Some(v)) = Pin::new(&mut self.rx).poll_next(cx) {
-            return Poll::Ready(Some(Ok(Message::Received(v))));
-        }
-
-        let result: Option<_> = futures::ready!(Pin::new(&mut self.lines).poll_next(cx));
-
-        Poll::Ready(match result {
-            Some(Ok(message)) => Some(Ok(Message::Broadcast(
-                                         MessageType::Cooked(CookedMessage{
-                                            uuid: gen_uuid(),
-                                            content: message,
-                                            author_uuid: self.user,
-                                            channel_uuid: self.channel,
-                                            date: 0,
-                                            rowid: 0,
-                                            })))),
-            Some(Err(e)) => Some(Err(e)),
-            None => None,
-        })
-    }
-}
 
 fn send_metadata(state_lock: &tokio::sync::MutexGuard<'_, Shared>, peer: &Peer) {
     let meta = json::array![state_lock.get_user(&peer.user).as_json()];
