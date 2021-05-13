@@ -66,3 +66,17 @@ impl Channel {
         };
     }
 }
+
+impl Group {
+    fn as_json(&self) -> json::JsonValue {
+        return json::object!{name: self.name.clone(), perms: self.permissions, uuid: self.uuid, colour: self.colour};
+    }
+    fn from_json(value: &json::JsonValue) -> Self {
+        Group {
+            uuid: value["uuid"].as_i64().unwrap(),
+            name: value["name"].to_string(),
+            permissions: value["perms"].as_i64().unwrap(),
+            colour: value["colour"].as_i32().unwrap(),
+        }
+    }
+}

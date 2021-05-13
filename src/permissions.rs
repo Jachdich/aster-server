@@ -1,27 +1,15 @@
 
+pub struct Perm;
 
-#[derive(FromPrimitive)]
-pub enum Permission {
-    ModifyChannel,
-    ChangeNick,
-    DeleteMessage,
-    EditMessage,
-    EditGroups,
-    EditUserGroups,
-    SendMessages,
-    JoinVoice,
-    Root,
-    ModifyServer,
-}
-
-pub fn has_perm(perms: i64, perm: Permission) -> bool {
-    ((perms >> (perm as u8)) & 0b1) != 0
-}
-
-pub fn set_perm(perms: i64, perm: Permission) -> i64 {
-    perms | (1 << perm as u8)
-}
-
-pub fn reset_perm(perms: i64, perm: Permission) -> i64 {
-    perms & !(1 << perm as u8)
+impl Perm {
+    pub const MODIFY_CHANNEL: i64   = 1 << 0;
+    pub const CHANGE_NICK: i64      = 1 << 1;
+    pub const DELETE_MESSAGE: i64   = 1 << 2;
+    pub const EDIT_MESSAGE: i64     = 1 << 3;
+    pub const EDIT_GROUPS: i64      = 1 << 4;
+    pub const EDIT_USER_GROUPS: i64 = 1 << 5;
+    pub const SEND_MESSAGE: i64     = 1 << 6;
+    pub const JOIN_VOICE: i64       = 1 << 7;
+    pub const ROOT: i64             = 1 << 8;
+    pub const MODFY_SERVER: i64     = 1 << 9;
 }

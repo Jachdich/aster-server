@@ -11,10 +11,6 @@ use tokio_util::codec::{Framed, LinesCodec};
 extern crate diesel;
 use diesel::prelude::*;
 
-extern crate num;
-#[macro_use]
-extern crate num_derive;
-
 use futures::SinkExt;
 use std::error::Error;
 use std::net::SocketAddr;
@@ -37,20 +33,10 @@ use peer::Peer;
 use shared::Shared;
 use helper::gen_uuid;
 
-use permissions::*;
+use permissions::Perm;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
-
-    let mut p: i64 = 0;
-    p = set_perm(p, Permission::ModifyChannel);
-    println!("{}", p);
-    p = set_perm(p, Permission::Root);
-    println!("{}", p);
-    println!("{} {}", has_perm(p, Permission::ModifyChannel), has_perm(p, Permission::Root));
-    p = reset_perm(p, Permission::Root);
-    println!("{} {}", p, has_perm(p, Permission::Root));
-    
     let state = Arc::new(Mutex::new(Shared::new()));
 
     {
@@ -69,13 +55,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
         native_tls::TlsAcceptor::builder(cert).build().unwrap()
     );
 
-/*
-    let handler_state = state.clone();
-
-    ctrlc::set_handler(move || {
-        handler_state.save();
-        std::process::exit(0); 
-    })?;*/
 
     loop {
         let (stream, addr) = listener.accept().await?;
@@ -92,18 +71,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
     }
     
 }
-/*
-impl Group {
-    fn as_json(&self) -> json::JsonValue {
-        return json::object!{name: self.name.clone(), perms: self.perms, uuid: self.uuid};
-    }
-    fn from_json(value: &json::JsonValue) -> Self {
-        Group {
-            name: value["name"].to_string(),
-            perms: value["perms"].
-        }
-    }
-}*/
 
 fn send_metadata(state_lock: &tokio::sync::MutexGuard<'_, Shared>, peer: &Peer) {
     let meta = json::array![state_lock.get_user(&peer.user).as_json()];
