@@ -26,3 +26,4 @@ diesel = { version = "*", features = ["sqlite", "numeric"]}
 num = "*"
 num-traits = "*"
 num-derive = "*"
+chrono = "*"

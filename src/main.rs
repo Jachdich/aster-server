@@ -187,7 +187,13 @@ async fn process_command(msg: &String, state: Arc<Mutex<Shared>>, peer: &mut Pee
                 peer.lines.send(json::object!{"command": "set", "key": "self_uuid", "value": uuid}.dump()).await?;
                 peer.logged_in = true;
                 peer.user = uuid;
-                state_lock.online.push(peer.user);
+
+                if let Some(index) = state_lock.online.iter().position(|x| *x == peer.user) {
+                    println!("Error: user already online???");
+                } else {
+                    state_lock.online.push(peer.user);
+                }
+
                 send_metadata(&state_lock, peer);
                 send_online(&state_lock);
             }

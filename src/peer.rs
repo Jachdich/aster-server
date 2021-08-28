@@ -9,6 +9,7 @@ use tokio_native_tls::TlsStream;
 use tokio::net::TcpStream;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use chrono;
 use crate::shared::Shared;
 use crate::message::*;
 
@@ -63,7 +64,7 @@ impl Stream for Peer {
                                             content: message,
                                             author_uuid: self.user,
                                             channel_uuid: self.channel,
-                                            date: 0,
+                                            date: chrono::offset::Utc::now().timestamp() as i32,
                                             rowid: 0,
                                             })))),
             Some(Err(e)) => Some(Err(e)),
