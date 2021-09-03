@@ -23,3 +23,7 @@ ctrlc = "*"
 rand = "*"
 base64 = "*"
 diesel = { version = "*", features = ["sqlite", "numeric"]}
+num = "*"
+num-traits = "*"
+num-derive = "*"
+chrono = "*"
