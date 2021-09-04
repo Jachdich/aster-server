@@ -43,6 +43,16 @@ async fn main() -> Result<(), Box<dyn Error>> {
         let mut state = state.lock().await;
         state.load();
     }
+
+    //start voice listener to connect to the voice server
+    let vstate = Arc::clone(&state);
+    tokio::spawn(async move {
+        loop {
+            if let Err(e) = listen_for_voice(&vstate).await {
+                println!("Voice server error: {:?}", e);
+            }
+        }
+    });
     
     let addr = "0.0.0.0:2345".to_string();
     
@@ -69,7 +79,29 @@ async fn main() -> Result<(), Box<dyn Error>> {
             }
         });
     }
+}
+
+async fn listen_for_voice(state: &Arc<Mutex<Shared>>) -> Result<(), Box<dyn Error>> {
+    let addr = "0.0.0.0:5432";
+    let listener = TcpListener::bind(&addr).await?;
+    let (stream, addr) = listener.accept().await?;
+    let mut lines = Framed::new(stream, LinesCodec::new());
     
+    while let Some(Ok(result)) = lines.next().await {
+        println!("{}", result);
+        let parsed = json::parse(&result);
+        match parsed {
+            Ok(parsed) => {
+                if parsed["command"] == "join" {
+                    lines.send("Lol ok");
+                }
+            }
+            Err(e) => {
+                eprintln!("Couldnt parse \"{}\" as json! ({:?})", result, e);
+            }
+        }
+    }
+    Ok(())
 }
 
 fn send_metadata(state_lock: &tokio::sync::MutexGuard<'_, Shared>, peer: &Peer) {
