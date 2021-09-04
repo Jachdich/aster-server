@@ -82,9 +82,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
 }
 
 async fn listen_for_voice(state: &Arc<Mutex<Shared>>) -> Result<(), Box<dyn Error>> {
+    println!("Starting voice server on 0.0.0.0:5432");
     let addr = "0.0.0.0:5432";
     let listener = TcpListener::bind(&addr).await?;
     let (stream, addr) = listener.accept().await?;
+    println!("Got voice server connection at {}", addr);
     let mut lines = Framed::new(stream, LinesCodec::new());
     
     while let Some(Ok(result)) = lines.next().await {
@@ -93,7 +95,7 @@ async fn listen_for_voice(state: &Arc<Mutex<Shared>>) -> Result<(), Box<dyn Erro
         match parsed {
             Ok(parsed) => {
                 if parsed["command"] == "join" {
-                    lines.send("Lol ok");
+                    lines.send("Lol ok").await?;
                 }
             }
             Err(e) => {
@@ -101,6 +103,7 @@ async fn listen_for_voice(state: &Arc<Mutex<Shared>>) -> Result<(), Box<dyn Erro
             }
         }
     }
+    println!("Voice server sent nothing lol");
     Ok(())
 }
 
