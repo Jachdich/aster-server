@@ -90,12 +90,12 @@ async fn listen_for_voice(state: &Arc<Mutex<Shared>>) -> Result<(), Box<dyn Erro
     let mut lines = Framed::new(stream, LinesCodec::new());
     
     while let Some(Ok(result)) = lines.next().await {
-        println!("{}", result);
         let parsed = json::parse(&result);
         match parsed {
             Ok(parsed) => {
                 if parsed["command"] == "join" {
-                    lines.send("Lol ok").await?;
+                }
+                if parsed["command"] = "leave" {
                 }
             }
             Err(e) => {
@@ -247,7 +247,7 @@ async fn process_command(msg: &String, state: Arc<Mutex<Shared>>, peer: &mut Pee
 
         "/join" => {
             if argv.len() < 2 {
-                peer.lines.send("Usage: /join <[#]channel>").await?;
+                peer.lines.send("Usage: /join <[#][&]channel>").await?;
             } else {
                 peer.channel(state_lock.get_channel_by_name(&argv[1].to_string()).uuid, &mut state_lock);
             }
