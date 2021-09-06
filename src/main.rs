@@ -93,9 +93,12 @@ async fn listen_for_voice(state: &Arc<Mutex<Shared>>) -> Result<(), Box<dyn Erro
         let parsed = json::parse(&result);
         match parsed {
             Ok(parsed) => {
+                let mut peer = state
                 if parsed["command"] == "join" {
+                    
                 }
-                if parsed["command"] = "leave" {
+                if parsed["command"] == "leave" {
+                    
                 }
             }
             Err(e) => {

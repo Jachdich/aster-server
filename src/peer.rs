@@ -16,7 +16,9 @@ use crate::message::*;
 pub struct Peer {
     pub lines: Framed<TlsStream<TcpStream>, LinesCodec>,
     pub rx: Pin<Box<dyn Stream<Item = MessageType> + Send>>,
+    tx: mpsc::UnboundedSender<MessageType>,
     pub channel: i64,
+    pub vcchannel: i64,
     pub user: i64,
     pub addr: SocketAddr,
     pub logged_in: bool,
@@ -26,7 +28,7 @@ impl Peer {
     pub async fn new(state: Arc<Mutex<Shared>>, lines: Framed<TlsStream<TcpStream>, LinesCodec>, channel: i64, addr: SocketAddr
     ) -> std::io::Result<Peer> {
         let (tx, mut rx) = mpsc::unbounded_channel::<MessageType>();
-        state.lock().await.channels.get_mut(&channel).unwrap().peers.insert(addr, tx);
+        state.lock().await.channels.get_mut(&channel).unwrap().peers.insert(addr, tx.clone());
 
         let rx = Box::pin(async_stream::stream! {
             while let Some(item) = rx.recv().await {
@@ -34,14 +36,24 @@ impl Peer {
             }
         });
 
-        Ok(Peer {lines, rx, channel, user: i64::MAX, addr, logged_in: false})
+        Ok(Peer {lines, rx, tx, channel, vcchannel: i64::MAX, user: i64::MAX, addr, logged_in: false})
     }
 
     pub fn channel(&mut self, new_channel: i64, state: &mut tokio::sync::MutexGuard<'_, Shared>) {
-        let tx = state.channels.get_mut(&self.channel).unwrap().peers.get(&self.addr).unwrap().clone();
+        //let tx = state.channels.get_mut(&self.channel).unwrap().peers.get(&self.addr).unwrap().clone();
         state.channels.get_mut(&self.channel).unwrap().peers.remove(&self.addr);
-        state.channels.get_mut(&new_channel).unwrap().peers.insert(self.addr, tx);
+        state.channels.get_mut(&new_channel).unwrap().peers.insert(self.addr, self.tx.clone());
         self.channel = new_channel.to_owned();
+    }
+
+    pub fn vcchannel(&mut self, chan: i64, state: &mut tokio::sync::MutexGuard<'_, Shared>) {
+        if self.vcchannel != i64::MAX {
+            state.channels.get_mut(&self.channel).unwrap().peers.remove(&self.addr);
+        }
+        if chan != i64::MAX {
+            state.channels.get_mut(&chan).unwrap().peers.insert(self.addr, self.tx.clone());
+        }
+        self.vcchannel = chan.to_owned();
     }
 }
 

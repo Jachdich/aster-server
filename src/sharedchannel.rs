@@ -11,13 +11,15 @@ use crate::message::*;
 pub struct SharedChannel {
     pub peers: HashMap<SocketAddr, Tx>,
     pub channel: Channel,
+    pub vcpeers: HashMap<SocketAddr, Tx>,
 }
 
 impl SharedChannel {
     pub fn new(channel: Channel) -> Self {
         SharedChannel {
             peers: HashMap::<SocketAddr, Tx>::new(),
-            channel,             
+            vcpeers: HashMap::<SocketAddr, Tx>::new(),
+            channel,
         }
     }
 
@@ -31,13 +33,19 @@ impl SharedChannel {
                     }
                 }
                 state.broadcast_unread(self.channel.uuid, state);
-
             }
+
             MessageType::Raw(_) => {
                 for peer in self.peers.iter() {
                     let _ = peer.1.send(message.clone());
                 }
             }
+        }
+    }
+
+    pub fn broadcast_vc(&self, sender: SocketAddr, message: RawMessage) {
+        for peer in self.peers.iter() {
+            let _ = peer.1.send(MessageType::Raw(message.clone()));
         }
     }
 
