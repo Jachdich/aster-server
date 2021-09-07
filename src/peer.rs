@@ -16,12 +16,30 @@ use crate::message::*;
 pub struct Peer {
     pub lines: Framed<TlsStream<TcpStream>, LinesCodec>,
     pub rx: Pin<Box<dyn Stream<Item = MessageType> + Send>>,
-    tx: mpsc::UnboundedSender<MessageType>,
+    pub tx: mpsc::UnboundedSender<MessageType>,
     pub channel: i64,
     pub vcchannel: i64,
     pub user: i64,
     pub addr: SocketAddr,
     pub logged_in: bool,
+}
+
+//stupid pun, just takes a couple of things from the peer that can be cloned
+#[derive(Clone)]
+pub struct Pontoon {
+    pub tx: mpsc::UnboundedSender<MessageType>,
+    pub addr: SocketAddr,
+    pub uuid: i64,
+}
+
+impl Pontoon {
+    pub fn from_peer(peer: &Peer) -> Self {
+        Pontoon {
+            tx: peer.tx.clone(),
+            addr: peer.addr.clone(),
+            uuid: peer.user,
+        }
+    }
 }
 
 impl Peer {

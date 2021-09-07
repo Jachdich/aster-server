@@ -1,11 +1,16 @@
 use crate::schema::messages;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct RawMessage {
     pub content: String,
 }
 
-#[derive(Queryable, Clone)]
+#[derive(Clone, Debug)]
+pub struct InternalMessage {
+    pub content: json::JsonValue,
+}
+
+#[derive(Queryable, Clone, Debug)]
 pub struct CookedMessage {
     pub uuid: i64,
     pub content: String,
@@ -29,6 +34,7 @@ pub struct CookedMessageInsertable {
 pub enum MessageType {
     Raw(RawMessage),
     Cooked(CookedMessage),
+    Internal(InternalMessage),
 }
 
 pub enum Message {

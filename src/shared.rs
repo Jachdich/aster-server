@@ -6,12 +6,15 @@ use diesel::prelude::*;
 use crate::models::*;
 use crate::message::*;
 use std::net::{SocketAddr, IpAddr, Ipv4Addr};
+use crate::peer::Peer;
+use crate::peer::Pontoon;
 
 pub struct Shared {
     pub channels: HashMap<i64, SharedChannel>,
     pub online: Vec<i64>,
     pub conn: SqliteConnection,
     pub properties: ServerProperties,
+    pub peers: Vec<Pontoon>,
 }
 
 impl Shared {
@@ -23,6 +26,7 @@ impl Shared {
             online: Vec::new(),
             conn: sqlitedb,
             properties: ServerProperties::load(),
+            peers: Vec::new(),
         }
     }
 

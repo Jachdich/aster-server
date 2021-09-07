@@ -30,6 +30,7 @@ pub mod permissions;
 use models::User;
 use message::*;
 use peer::Peer;
+use peer::Pontoon;
 use shared::Shared;
 use helper::gen_uuid;
 
@@ -81,24 +82,49 @@ async fn main() -> Result<(), Box<dyn Error>> {
     }
 }
 
-async fn listen_for_voice(state: &Arc<Mutex<Shared>>) -> Result<(), Box<dyn Error>> {
+async fn listen_for_voice<'a>(state: &Arc<Mutex<Shared>>) -> Result<(), Box<dyn Error>> {
     println!("Starting voice server on 0.0.0.0:5432");
     let addr = "0.0.0.0:5432";
     let listener = TcpListener::bind(&addr).await?;
     let (stream, addr) = listener.accept().await?;
     println!("Got voice server connection at {}", addr);
     let mut lines = Framed::new(stream, LinesCodec::new());
+
+    let mut joined: Vec<i64> = Vec::new();
     
     while let Some(Ok(result)) = lines.next().await {
         let parsed = json::parse(&result);
         match parsed {
             Ok(parsed) => {
-                let mut peer = state
+                //let mut peer = state
                 if parsed["command"] == "join" {
-                    
+                    joined.push(parsed["uuid"].as_i64().unwrap());
+                    {
+                        let state = state.lock().await;
+                        for peer in &state.peers {
+                            if joined.contains(&peer.uuid) {
+                                peer.tx.send(MessageType::Internal(InternalMessage{ content: json::object!{command: "someone joined voice", uuid: parsed["uuid"].as_i64().unwrap() } } ));
+                            }
+                        }
+                    }
                 }
                 if parsed["command"] == "leave" {
-                    
+                    let mut idx = 0;
+                    for peer in &joined {
+                        if *peer == parsed["uuid"].as_i64().unwrap() {
+                            joined.remove(idx);
+                            break;
+                        }
+                        idx += 1;
+                    }
+                    {
+                        let state = state.lock().await;
+                        for peer in &state.peers {
+                            if joined.contains(&peer.uuid) {
+                                peer.tx.send(MessageType::Internal(InternalMessage { content: json::object!{command: "someone left voice", uuid: parsed["uuid"].as_i64().unwrap() } } ));
+                            }
+                        }
+                    }
                 }
             }
             Err(e) => {
@@ -193,7 +219,7 @@ async fn process_command(msg: &String, state: Arc<Mutex<Shared>>, peer: &mut Pee
                 peer.logged_in = true;
                 peer.user = uuid;
 
-                if let Some(index) = state_lock.online.iter().position(|x| *x == peer.user) {
+                if let Some(_) = state_lock.online.iter().position(|x| *x == peer.user) {
                     println!("Error: user already online???");
                 } else {
                     state_lock.online.push(peer.user);
@@ -306,6 +332,11 @@ async fn process_command(msg: &String, state: Arc<Mutex<Shared>>, peer: &mut Pee
     Ok(())
 }
 
+async fn process_internal_command(msg: &InternalMessage, state: Arc<Mutex<Shared>>, peer: &mut Peer) -> Result<(), Box<dyn Error>> {
+    println!("internal command: {:?}", msg);
+    Ok(())
+}
+
 async fn process(state: Arc<Mutex<Shared>>, stream: TlsStream<TcpStream>, addr: SocketAddr) -> Result<(), Box<dyn Error>> {
     let channel: i64;
     {
@@ -314,6 +345,10 @@ async fn process(state: Arc<Mutex<Shared>>, stream: TlsStream<TcpStream>, addr: 
     }
     let lines = Framed::new(stream, LinesCodec::new());
     let mut peer = Peer::new(state.clone(), lines, channel, addr).await?;
+    {
+        let mut state = state.lock().await;
+        state.peers.push(Pontoon::from_peer(&peer));
+    }
     
     while let Some(result) = peer.next().await {
         match result {
@@ -333,8 +368,13 @@ async fn process(state: Arc<Mutex<Shared>>, stream: TlsStream<TcpStream>, addr: 
                             }
                         }
                     }
-                    MessageType::Raw(_msg) => {
+                    MessageType::Raw(msg) => {
                         //this doesn't make sense
+                        panic!("User recv'd message '{:?}' type Raw from the client for some reason. This is a server bug", msg);
+                    }
+                    MessageType::Internal(msg) => {
+                        //This also doesn't make any sense
+                        panic!("User recv'd message '{:?}' type Internal from the client for some reason. This is a server bug", msg);
                     }
                 }
             }
@@ -346,6 +386,9 @@ async fn process(state: Arc<Mutex<Shared>>, stream: TlsStream<TcpStream>, addr: 
                     }
                     MessageType::Raw(msg) => {
                         peer.lines.send(&msg.content).await?;
+                    }
+                    MessageType::Internal(msg) => {
+                        process_internal_command(&msg, state.clone(), &mut peer).await?;
                     }
                 }
             }

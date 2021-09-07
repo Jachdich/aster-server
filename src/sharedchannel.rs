@@ -40,11 +40,17 @@ impl SharedChannel {
                     let _ = peer.1.send(message.clone());
                 }
             }
+
+            MessageType::Internal(_) => {
+                for peer in self.peers.iter() {
+                    let _ = peer.1.send(message.clone());
+                }
+            }
         }
     }
 
     pub fn broadcast_vc(&self, sender: SocketAddr, message: RawMessage) {
-        for peer in self.peers.iter() {
+        for peer in self.vcpeers.iter() {
             let _ = peer.1.send(MessageType::Raw(message.clone()));
         }
     }
