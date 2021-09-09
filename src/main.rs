@@ -186,6 +186,9 @@ async fn process_command(msg: &String, state: Arc<Mutex<Shared>>, peer: &mut Pee
             
             peer.lines.send(json::object!{command: "get_channels", data: res}.dump()).await?;
         }
+        "/ping" => {
+            peer.lines.send(json::object!{command: "pong"}.dump()).await?;
+        }
         _ => {}
     }
 
