@@ -1,5 +1,4 @@
 extern crate tokio;
-extern crate ctrlc;
 
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Mutex;
@@ -35,6 +34,8 @@ use shared::Shared;
 use helper::gen_uuid;
 
 use permissions::Perm;
+
+const API_VERSION: &'static str = "0.1.1";
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
@@ -181,7 +182,7 @@ async fn process_command(msg: &String, state: Arc<Mutex<Shared>>, peer: &mut Pee
             let mut res = json::JsonValue::new_array();
             let channels = state_lock.get_channels();
             for channel in channels {
-                res.push(channel.name).unwrap();
+                res.push(channel.as_json()).unwrap();
             }
             
             peer.lines.send(json::object!{command: "get_channels", data: res}.dump()).await?;
@@ -235,6 +236,13 @@ async fn process_command(msg: &String, state: Arc<Mutex<Shared>>, peer: &mut Pee
             "/login" => {
                 //log in an existing user
                 let uuid = argv[1].parse::<i64>().unwrap();
+                if argv.len() <= 2 {
+                    peer.lines.send(json::object!{"warning": "Logging in without password is deprecated and WILL BE REMOVED SOON. Please update your client"}.dump()).await?;
+                } else {
+                    let password = argv[2];
+                    let hashed_password = "";
+                    //if hashed_password == state_lock.get_password(uuid);
+                }
                 peer.lines.send(json::object!{"command": "set", "key": "self_uuid", "value": uuid}.dump()).await?;
                 peer.user = uuid;
                 peer.logged_in = true;
@@ -242,6 +250,24 @@ async fn process_command(msg: &String, state: Arc<Mutex<Shared>>, peer: &mut Pee
                 state_lock.online.push(peer.user);
                 send_metadata(&state_lock, peer);
                 send_online(&state_lock);
+            }
+
+            "/login_username" => {
+                /*
+                if argv.len() <= 2 {
+                    peer.lines.send(json::object!{"warning": "Logging in without password is deprecated and WILL BE REMOVED SOON. Please update your client"}.dump()).await?;
+                } else {
+                    let password = argv[2];
+                    let hashed_password = "";
+                    //if hashed_password == state_lock.get_password(uuid);
+                }
+                peer.lines.send(json::object!{"command": "set", "key": "self_uuid", "value": uuid}.dump()).await?;
+                peer.user = uuid;
+                peer.logged_in = true;
+
+                state_lock.online.push(peer.user);
+                send_metadata(&state_lock, peer);
+                send_online(&state_lock);*/
             }
 
             _ => {}
@@ -279,7 +305,7 @@ async fn process_command(msg: &String, state: Arc<Mutex<Shared>>, peer: &mut Pee
 
         "/join" => {
             if argv.len() < 2 {
-                peer.lines.send("Usage: /join <[#][&]channel>").await?;
+                peer.lines.send("Usage: /join <[#|&]channel>").await?;
             } else {
                 peer.channel(state_lock.get_channel_by_name(&argv[1].to_string()).uuid, &mut state_lock);
             }
@@ -298,9 +324,9 @@ async fn process_command(msg: &String, state: Arc<Mutex<Shared>>, peer: &mut Pee
                 //peer.lines.send(msg).await;
                 res.push(msg.as_json()).unwrap();
             }
-            let json_obj = json::object!{history: res};
+            let json_obj = json::object!{command: "history", data: res};
+            println!("Recvd history command: {}", &json_obj.dump());
             peer.lines.send(&json_obj.dump()).await?;
-
         }
 
         "/pfp" => {
@@ -321,10 +347,11 @@ async fn process_command(msg: &String, state: Arc<Mutex<Shared>>, peer: &mut Pee
         //}
 
         "/leave" => {
-            ()
+            peer.lines.send("Goodbye").await?;
         }
 
         "/delete" => {
+            //TODO what
             let uuid = argv[1].parse::<i64>().unwrap();
             diesel::delete(schema::users::table.filter(schema::users::uuid.eq(uuid))).execute(&state_lock.conn).unwrap();
             diesel::delete(schema::messages::table.filter(
@@ -352,6 +379,9 @@ async fn process(state: Arc<Mutex<Shared>>, stream: TlsStream<TcpStream>, addr: 
         let mut state = state.lock().await;
         state.peers.push(Pontoon::from_peer(&peer));
     }
+
+    peer.lines.send(json::object!{command: "API_version", data: API_VERSION}.dump()).await?;
+    //TODO handshake protoco
     
     while let Some(result) = peer.next().await {
         match result {
@@ -385,7 +415,9 @@ async fn process(state: Arc<Mutex<Shared>>, stream: TlsStream<TcpStream>, addr: 
             Ok(Message::Received(msg)) => {
                 match msg {
                     MessageType::Cooked(msg) => {
-                        peer.lines.send(&msg.as_json().dump()).await?;
+                        let mut msg_json: json::JsonValue = msg.as_json();
+                        msg_json["command"] = "history".into();
+                        peer.lines.send(&msg_json.dump()).await?;
                     }
                     MessageType::Raw(msg) => {
                         peer.lines.send(&msg.content).await?;

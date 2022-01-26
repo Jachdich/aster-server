@@ -84,6 +84,8 @@ impl Shared {
         return results.remove(0);
     }
 
+    //pub fn get_password(&self, user: &i64) -> 
+
     pub fn get_channel(&self, channel: &i64) -> Channel {
         let mut results = schema::channels::table
             .filter(schema::channels::uuid.eq(channel))

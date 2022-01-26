@@ -65,6 +65,10 @@ impl Channel {
             name: name.to_string(),
         };
     }
+
+    pub fn as_json(&self) -> json::JsonValue {
+        return json::object!{name: self.name.clone(), uuid: self.uuid};
+    }
 }
 
 impl Group {
