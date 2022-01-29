@@ -35,7 +35,10 @@ use helper::gen_uuid;
 
 use permissions::Perm;
 
-const API_VERSION: &'static str = "0.1.1";
+//release.major.minor
+const API_VERSION_RELEASE: u8 = 0;
+const API_VERSION_MAJOR: u8 = 1;
+const API_VERSION_MINOR: u8 = 2;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
@@ -253,7 +256,6 @@ async fn process_command(msg: &String, state: Arc<Mutex<Shared>>, peer: &mut Pee
             }
 
             "/login_username" => {
-                /*
                 if argv.len() <= 2 {
                     peer.lines.send(json::object!{"warning": "Logging in without password is deprecated and WILL BE REMOVED SOON. Please update your client"}.dump()).await?;
                 } else {
@@ -261,13 +263,14 @@ async fn process_command(msg: &String, state: Arc<Mutex<Shared>>, peer: &mut Pee
                     let hashed_password = "";
                     //if hashed_password == state_lock.get_password(uuid);
                 }
+                let uuid = schema::users::table.filter(schema::users::name.eq(argv[1])).limit(1).load::<User>(&state_lock.conn).unwrap()[0].uuid;
                 peer.lines.send(json::object!{"command": "set", "key": "self_uuid", "value": uuid}.dump()).await?;
                 peer.user = uuid;
                 peer.logged_in = true;
 
                 state_lock.online.push(peer.user);
                 send_metadata(&state_lock, peer);
-                send_online(&state_lock);*/
+                send_online(&state_lock);
             }
 
             _ => {}
@@ -325,7 +328,6 @@ async fn process_command(msg: &String, state: Arc<Mutex<Shared>>, peer: &mut Pee
                 res.push(msg.as_json()).unwrap();
             }
             let json_obj = json::object!{command: "history", data: res};
-            println!("Recvd history command: {}", &json_obj.dump());
             peer.lines.send(&json_obj.dump()).await?;
         }
 
@@ -380,8 +382,8 @@ async fn process(state: Arc<Mutex<Shared>>, stream: TlsStream<TcpStream>, addr: 
         state.peers.push(Pontoon::from_peer(&peer));
     }
 
-    peer.lines.send(json::object!{command: "API_version", data: API_VERSION}.dump()).await?;
-    //TODO handshake protoco
+    peer.lines.send(json::object!{command: "API_version", rel: API_VERSION_RELEASE, maj: API_VERSION_MAJOR, min: API_VERSION_MINOR}.dump()).await?;
+    //TODO handshake protocol
     
     while let Some(result) = peer.next().await {
         match result {
@@ -416,7 +418,7 @@ async fn process(state: Arc<Mutex<Shared>>, stream: TlsStream<TcpStream>, addr: 
                 match msg {
                     MessageType::Cooked(msg) => {
                         let mut msg_json: json::JsonValue = msg.as_json();
-                        msg_json["command"] = "history".into();
+                        msg_json["command"] = "content".into();
                         peer.lines.send(&msg_json.dump()).await?;
                     }
                     MessageType::Raw(msg) => {
