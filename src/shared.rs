@@ -95,6 +95,19 @@ impl Shared {
         return results.remove(0);
     }
 
+    pub fn get_sync_data(&self, uuid: &i64) -> Option<SyncData> {
+        let mut results = schema::sync_data::table
+            .filter(schema::sync_data::user_uuid.eq(uuid))
+            .limit(1)
+            .load::<SyncData>(&self.conn)
+            .expect(&format!("User '{}' does not have sync data", uuid));
+        if results.len() > 0 {
+            Some(results.remove(0))
+        } else {
+            None
+        }
+    }
+
     pub fn get_channel_by_name(&self, channel: &String) -> Channel {
         let mut results = schema::channels::table
             .filter(schema::channels::name.eq(channel))
@@ -119,6 +132,20 @@ impl Shared {
             .expect("Error appending user");
     }
 
+    pub fn insert_sync_data(&self, data: &SyncData) {
+        let _ = diesel::insert_into(schema::sync_data::table)
+            .values(data)
+            .execute(&self.conn)
+            .expect("Error appending sync data");
+    }
+
+    pub fn insert_sync_server(&self, data: SyncServer) {
+        let _ = diesel::insert_into(schema::sync_servers::table)
+            .values(data)
+            .execute(&self.conn)
+            .expect("Error appending sync server");
+    }
+
     pub fn update_user(&self, user: User) {
         diesel::update(schema::users::table.find(user.uuid))
             .set((schema::users::name.eq(user.name),
@@ -126,5 +153,13 @@ impl Shared {
             schema::users::group_uuid.eq(user.group_uuid)))
             .execute(&self.conn)
             .expect(&format!("Unable to find user {}", user.uuid));
+    }
+
+    pub fn update_sync_data(&self, data: SyncData) {
+        diesel::update(schema::sync_data::table.find(data.user_uuid))
+            .set((schema::sync_data::uname.eq(data.uname),
+                  schema::sync_data::pfp.eq(data.pfp)))
+            .execute(&self.conn)
+            .expect(&format!("Unable to find user {} (update sync_data)", data.user_uuid));
     }
 }

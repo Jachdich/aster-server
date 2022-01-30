@@ -359,40 +359,68 @@ async fn process_command(msg: &String, state: Arc<Mutex<Shared>>, peer: &mut Pee
         }
 
         "/sync_set" => {
-            /*let val = 
+            
+            let val = argv[2..].join(" ");
+            let mut sync_data = match state_lock.get_sync_data(&peer.user) {
+                Some(data) => data,
+                None => {
+                    let data = SyncData::new(peer.user);
+                    state_lock.insert_sync_data(&data);
+                    data
+                }
+            };
+            
             match argv[1] {
-                "uname" => 
-                "pfp" => 
+                "uname" => sync_data.uname = val,
+                "pfp" => sync_data.pfp = val,
                 _ => //TODO overkill?
-                     peer.lines.send(json::object!{request: "sync_get", key: argv[1], message: "Invalid key", code: -1}.dump()).await?;
-                
-            }*/
+                     peer.lines.send(json::object!{request: "sync_get", key: argv[1], message: "Invalid key", code: -1}.dump()).await?,   
+            }
+
+            state_lock.update_sync_data(sync_data);
         }
 
         "/sync_add_server" => {
-
+            //command like
+            //  /sync_add_server {"ip": "cospox.com", "port": 69420, "uuid": whatever, "pfp": idk, "name": shit}
+            let json_data = json::parse(&argv[1..].join(" ")).unwrap();
+            let server = SyncServer::from_json(&json_data, peer.user, 0);
+            state_lock.insert_sync_server(server);
         }
 
-        "/sync_rm_server" => {
+        "/sync_get_servers" => {
+            /*let servers = schema::sync_servers::table
+                    .filter(schema::sync_servers::user_uuid.eq(peer.user))
+                    .order(schema::sync_servers::idx.asc())
+                    .load::<SyncServer>(&state_lock.conn).unwrap();
 
+            peer.lines.send(json::object!{request: "sync_get_servers", data: servers.iter().map(|x| x.as_json()).collect(), code: 0}.dump()).await?;*/
         }
 
         "/sync_get" => {
-            let sync_data = &schema::sync_data::table.filter(schema::sync_data::user_uuid.eq(peer.user)).limit(1).load::<SyncData>(&state_lock.conn).unwrap()[0];
-            let response: &str = match argv[1] {
-                "uname" => &sync_data.uname,
-                "pfp" => &sync_data.pfp,
-                _ => {
-                    //TODO overkill?
-                    peer.lines.send(json::object!{request: "sync_get", key: argv[1], message: "Invalid key", code: -1}.dump()).await?;
-                    ""
+            let sync_data = state_lock.get_sync_data(&peer.user);
+            if let Some(sync_data) = sync_data {
+                let response: &str = match argv[1] {
+                    "uname" => &sync_data.uname,
+                    "pfp" => &sync_data.pfp,
+                    _ => {
+                        //TODO overkill?
+                        peer.lines.send(json::object!{request: "sync_get", key: argv[1], message: "Invalid key", code: -1}.dump()).await?;
+                        ""
+                    }
+                };
+
+                //TODO unset properties will trigger this if statement to not send the data
+                if response != "" {
+                    peer.lines.send(json::object!{request: "sync_get", key: argv[1], data: response, code: 0}.dump()).await?;
                 }
-            };
-            if response != "" {
-                peer.lines.send(json::object!{request: "sync_get", key: argv[1], data: response}.dump()).await?;
+            } else {
+                peer.lines.send(json::object!{request: "sync_get", key: argv[1], message: "User has no sync data", code: -2}.dump()).await?;
             }
         }
-        _ => ()
+        _ => {
+            peer.lines.send(json::object!{request: argv[0], message: "Invalid command", code: -1}.dump()).await?;
+        }
     }
     Ok(())
 }

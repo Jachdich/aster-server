@@ -45,27 +45,59 @@ pub struct UserGroupConnection {
 #[table_name="sync_data"]
 pub struct SyncData {
     pub user_uuid: i64,
-    pub pfp: String,
     pub uname: String,
+    pub pfp: String,
 }
 
 #[derive(Queryable, Insertable, Clone)]
 #[table_name="sync_servers"]
 pub struct SyncServer {
     pub user_uuid: i64,
+    pub server_uuid: i64,
     pub ip: String,
     pub port: i32,
     pub pfp: String,
     pub name: String,
+    pub idx: i32,
+    pub rowid: i32,
 }
 
 fn gen_uuid() -> i64 {
     (random::<u64>() >> 1) as i64
 }
 
+impl SyncData {
+    pub fn new(uuid: i64) -> Self {
+        Self {
+            user_uuid: uuid,
+            pfp: "".into(),
+            uname: "".into(),
+        }
+    }
+}
+
+impl SyncServer {
+    pub fn as_json(&self) -> json::JsonValue {
+        json::object!{name: self.name.clone(), uuid: self.server_uuid, ip: self.ip.clone(), port: self.port, pfp: self.pfp.clone()}
+    }
+
+    pub fn from_json(value: &json::JsonValue, user_uuid: i64, index: i32) -> Self {
+        SyncServer {
+            user_uuid: user_uuid,
+            server_uuid: value["uuid"].as_i64().unwrap(),
+            ip: value["ip"].as_str().unwrap().to_string(),
+            port: value["port"].as_i32().unwrap(),
+            pfp: value["pfp"].as_str().unwrap().to_string(),
+            name: value["name"].as_str().unwrap().to_string(),
+            idx: index,
+            rowid: 0,
+        }
+    }
+}
+
 impl User {
     pub fn as_json(&self) -> json::JsonValue {
-        return json::object!{name: self.name.clone(), uuid: self.uuid, pfp: self.pfp.clone(), group_uuid: self.group_uuid};
+        json::object!{name: self.name.clone(), uuid: self.uuid, pfp: self.pfp.clone(), group_uuid: self.group_uuid}
     }
     pub fn from_json(value: &json::JsonValue) -> Self {
         User {
@@ -87,13 +119,13 @@ impl Channel {
     }
 
     pub fn as_json(&self) -> json::JsonValue {
-        return json::object!{name: self.name.clone(), uuid: self.uuid};
+        json::object!{name: self.name.clone(), uuid: self.uuid}
     }
 }
 
 impl Group {
     fn as_json(&self) -> json::JsonValue {
-        return json::object!{name: self.name.clone(), perms: self.permissions, uuid: self.uuid, colour: self.colour};
+        json::object!{name: self.name.clone(), perms: self.permissions, uuid: self.uuid, colour: self.colour}
     }
     fn from_json(value: &json::JsonValue) -> Self {
         Group {
