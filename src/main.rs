@@ -26,19 +26,17 @@ pub mod peer;
 pub mod helper;
 pub mod permissions;
 
-use models::User;
+use models::*;
 use message::*;
 use peer::Peer;
 use peer::Pontoon;
 use shared::Shared;
 use helper::gen_uuid;
 
-use permissions::Perm;
-
 //release.major.minor
 const API_VERSION_RELEASE: u8 = 0;
 const API_VERSION_MAJOR: u8 = 1;
-const API_VERSION_MINOR: u8 = 2;
+const API_VERSION_MINOR: u8 = 3;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
@@ -193,6 +191,10 @@ async fn process_command(msg: &String, state: Arc<Mutex<Shared>>, peer: &mut Pee
         "/ping" => {
             peer.lines.send(json::object!{command: "pong"}.dump()).await?;
         }
+        "/leave" => {
+            peer.lines.send(json::object!{command: "Goodbye"}.dump()).await?;
+        }
+
         _ => {}
     }
 
@@ -348,16 +350,47 @@ async fn process_command(msg: &String, state: Arc<Mutex<Shared>>, peer: &mut Pee
         //    shared_lock.channels.insert("#".to_string(), SharedChannel::new());
         //}
 
-        "/leave" => {
-            peer.lines.send("Goodbye").await?;
-        }
-
         "/delete" => {
             //TODO what
             let uuid = argv[1].parse::<i64>().unwrap();
             diesel::delete(schema::users::table.filter(schema::users::uuid.eq(uuid))).execute(&state_lock.conn).unwrap();
             diesel::delete(schema::messages::table.filter(
                 schema::messages::author_uuid.eq(uuid))).execute(&state_lock.conn).unwrap();
+        }
+
+        "/sync_set" => {
+            /*let val = 
+            match argv[1] {
+                "uname" => 
+                "pfp" => 
+                _ => //TODO overkill?
+                     peer.lines.send(json::object!{request: "sync_get", key: argv[1], message: "Invalid key", code: -1}.dump()).await?;
+                
+            }*/
+        }
+
+        "/sync_add_server" => {
+
+        }
+
+        "/sync_rm_server" => {
+
+        }
+
+        "/sync_get" => {
+            let sync_data = &schema::sync_data::table.filter(schema::sync_data::user_uuid.eq(peer.user)).limit(1).load::<SyncData>(&state_lock.conn).unwrap()[0];
+            let response: &str = match argv[1] {
+                "uname" => &sync_data.uname,
+                "pfp" => &sync_data.pfp,
+                _ => {
+                    //TODO overkill?
+                    peer.lines.send(json::object!{request: "sync_get", key: argv[1], message: "Invalid key", code: -1}.dump()).await?;
+                    ""
+                }
+            };
+            if response != "" {
+                peer.lines.send(json::object!{request: "sync_get", key: argv[1], data: response}.dump()).await?;
+            }
         }
         _ => ()
     }

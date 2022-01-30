@@ -2,6 +2,8 @@ use crate::schema::channels;
 use crate::schema::users;
 use crate::schema::groups;
 use crate::schema::user_groups;
+use crate::schema::sync_data;
+use crate::schema::sync_servers;
 use rand::prelude::*;
 
 #[derive(Queryable, Insertable, Clone)]
@@ -37,6 +39,24 @@ pub struct UserGroupConnection {
     link_id: i32,
     pub user_uuid: i64,
     pub group_uuid: i64,
+}
+
+#[derive(Queryable, Insertable, Clone)]
+#[table_name="sync_data"]
+pub struct SyncData {
+    pub user_uuid: i64,
+    pub pfp: String,
+    pub uname: String,
+}
+
+#[derive(Queryable, Insertable, Clone)]
+#[table_name="sync_servers"]
+pub struct SyncServer {
+    pub user_uuid: i64,
+    pub ip: String,
+    pub port: i32,
+    pub pfp: String,
+    pub name: String,
 }
 
 fn gen_uuid() -> i64 {

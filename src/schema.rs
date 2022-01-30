@@ -42,6 +42,24 @@ table! {
     }
 }
 
+table! {
+    sync_data (user_uuid) {
+        user_uuid -> BigInt,
+        uname -> Text,
+        pfp -> Text,
+    }
+}
+
+table! {
+    sync_servers (user_uuid) {
+        user_uuid -> BigInt,
+        ip -> Text,
+        port -> Integer,
+        pfp -> Text,
+        name -> Text,
+    }
+}
+
 joinable!(messages -> channels (channel_uuid));
 joinable!(messages -> users (author_uuid));
 joinable!(user_groups -> groups (group_uuid));
@@ -54,4 +72,6 @@ allow_tables_to_appear_in_same_query!(
     messages,
     user_groups,
     users,
+    sync_data,
+    sync_servers
 );
