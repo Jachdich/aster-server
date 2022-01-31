@@ -359,42 +359,77 @@ async fn process_command(msg: &String, state: Arc<Mutex<Shared>>, peer: &mut Pee
         }
 
         "/sync_set" => {
-            
-            let val = argv[2..].join(" ");
-            let mut sync_data = match state_lock.get_sync_data(&peer.user) {
-                Some(data) => data,
-                None => {
-                    let data = SyncData::new(peer.user);
-                    state_lock.insert_sync_data(&data);
-                    data
+            if argv.len() < 3 {
+                peer.lines.send(json::object!{request: "sync_get", message: "Too few arguments", code: -1}.dump()).await?; 
+            } else {
+                let val = argv[2..].join(" ");
+                let mut sync_data = match state_lock.get_sync_data(&peer.user) {
+                    Some(data) => data,
+                    None => {
+                        let data = SyncData::new(peer.user);
+                        state_lock.insert_sync_data(&data);
+                        data
+                    }
+                };
+                
+                match argv[1] {
+                    "uname" => sync_data.uname = val,
+                    "pfp" => sync_data.pfp = val,
+                    _ => //TODO overkill?
+                         peer.lines.send(json::object!{request: "sync_get", key: argv[1], message: "Invalid key", code: -1}.dump()).await?,   
                 }
-            };
-            
-            match argv[1] {
-                "uname" => sync_data.uname = val,
-                "pfp" => sync_data.pfp = val,
-                _ => //TODO overkill?
-                     peer.lines.send(json::object!{request: "sync_get", key: argv[1], message: "Invalid key", code: -1}.dump()).await?,   
-            }
 
-            state_lock.update_sync_data(sync_data);
+                state_lock.update_sync_data(sync_data);
+            }
         }
 
         "/sync_add_server" => {
-            //command like
-            //  /sync_add_server {"ip": "cospox.com", "port": 69420, "uuid": whatever, "pfp": idk, "name": shit}
-            let json_data = json::parse(&argv[1..].join(" ")).unwrap();
-            let server = SyncServer::from_json(&json_data, peer.user, 0);
-            state_lock.insert_sync_server(server);
+            let json_data = json::parse(&argv[1..].join(" "));
+            if let Ok(json_data) = json_data {
+                let last_server = schema::sync_servers::table
+                        .filter(schema::sync_servers::user_uuid.eq(peer.user))
+                        .order(schema::sync_servers::idx.desc())
+                        .limit(1)
+                        .load::<SyncServerQuery>(&state_lock.conn).unwrap();
+                let idx = if last_server.len() > 0 {
+                    last_server[0].idx + 1
+                } else {
+                    0
+                };
+                let server = SyncServer::from_json(&json_data, peer.user, idx);
+                state_lock.insert_sync_server(server);
+            } else {
+                peer.lines.send(json::object!{request: "sync_add_server", code: -1, message: "Invalid JSON data"}.dump()).await?;
+            }
         }
 
+        "/sync_set_servers" => {
+            let json_data = json::parse(&argv[1..].join(" "));
+            if let Ok(json_data) = json_data {
+                diesel::delete(schema::sync_servers::table
+                        .filter(schema::sync_servers::user_uuid.eq(peer.user)))
+                        .execute(&state_lock.conn).unwrap();
+
+                let mut idx = 0;
+                for sync_json in json_data["data"].members() {
+                    let server = SyncServer::from_json(&sync_json, peer.user, idx);
+                    state_lock.insert_sync_server(server);
+                    idx += 1;
+                }
+            } else {
+                peer.lines.send(json::object!{request: "sync_add_server", code: -1, message: "Invalid JSON data"}.dump()).await?;
+            }        }
+
         "/sync_get_servers" => {
-            /*let servers = schema::sync_servers::table
+            let servers = schema::sync_servers::table
                     .filter(schema::sync_servers::user_uuid.eq(peer.user))
                     .order(schema::sync_servers::idx.asc())
-                    .load::<SyncServer>(&state_lock.conn).unwrap();
+                    .load::<SyncServerQuery>(&state_lock.conn).unwrap();
 
-            peer.lines.send(json::object!{request: "sync_get_servers", data: servers.iter().map(|x| x.as_json()).collect(), code: 0}.dump()).await?;*/
+            peer.lines.send(json::object!{
+                    request: "sync_get_servers",
+                    data: servers.iter().map(|x| SyncServer::from(x.clone()).as_json()).collect::<Vec<json::JsonValue>>(),
+                    code: 0}.dump()).await?;
         }
 
         "/sync_get" => {

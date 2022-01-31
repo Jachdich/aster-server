@@ -49,15 +49,26 @@ pub struct SyncData {
     pub pfp: String,
 }
 
-#[derive(Queryable, Insertable, Clone)]
+#[derive(Insertable, Clone)]
 #[table_name="sync_servers"]
 pub struct SyncServer {
     pub user_uuid: i64,
     pub server_uuid: i64,
     pub ip: String,
     pub port: i32,
-    pub pfp: String,
-    pub name: String,
+    pub pfp:  Option<String>,
+    pub name: Option<String>,
+    pub idx: i32,
+}
+
+#[derive(Queryable, Clone)]
+pub struct SyncServerQuery {
+    pub user_uuid: i64,
+    pub server_uuid: i64,
+    pub ip: String,
+    pub port: i32,
+    pub pfp:  Option<String>,
+    pub name: Option<String>,
     pub idx: i32,
     pub rowid: i32,
 }
@@ -76,9 +87,23 @@ impl SyncData {
     }
 }
 
+impl From<SyncServerQuery> for SyncServer {
+    fn from(item: SyncServerQuery) -> Self {
+        SyncServer {
+            user_uuid: item.user_uuid,
+            server_uuid: item.server_uuid,
+            ip: item.ip,
+            port: item.port,
+            pfp: item.pfp,
+            name: item.name,
+            idx: item.idx,
+        }
+    }
+}
+
 impl SyncServer {
     pub fn as_json(&self) -> json::JsonValue {
-        json::object!{name: self.name.clone(), uuid: self.server_uuid, ip: self.ip.clone(), port: self.port, pfp: self.pfp.clone()}
+        json::object!{name: self.name.clone().unwrap_or("".into()), uuid: self.server_uuid, ip: self.ip.clone(), port: self.port, pfp: self.pfp.clone().unwrap_or("".into())}
     }
 
     pub fn from_json(value: &json::JsonValue, user_uuid: i64, index: i32) -> Self {
@@ -87,10 +112,9 @@ impl SyncServer {
             server_uuid: value["uuid"].as_i64().unwrap(),
             ip: value["ip"].as_str().unwrap().to_string(),
             port: value["port"].as_i32().unwrap(),
-            pfp: value["pfp"].as_str().unwrap().to_string(),
-            name: value["name"].as_str().unwrap().to_string(),
+            pfp:  Some(value["pfp"].as_str().unwrap().to_string()),
+            name: Some(value["name"].as_str().unwrap().to_string()),
             idx: index,
-            rowid: 0,
         }
     }
 }
