@@ -4,6 +4,7 @@ use crate::schema::groups;
 use crate::schema::user_groups;
 use crate::schema::sync_data;
 use crate::schema::sync_servers;
+use crate::schema::emojis;
 use rand::prelude::*;
 
 #[derive(Queryable, Insertable, Clone)]
@@ -73,8 +74,28 @@ pub struct SyncServerQuery {
     pub rowid: i32,
 }
 
+#[derive(Queryable, Insertable, Clone)]
+#[table_name="emojis"]
+pub struct Emoji {
+    pub uuid: i64,
+    pub name: String,
+    pub data: String,
+}
+
 fn gen_uuid() -> i64 {
     (random::<u64>() >> 1) as i64
+}
+
+impl Emoji {
+    pub fn new(uuid: i64, name: String, data: String) -> Self {
+        Self {
+            uuid, name, data
+        }
+    }
+    
+    pub fn as_json(&self) -> json::JsonValue {
+        return json::object!{data: self.data.clone(), name: self.name.clone(), uuid: self.uuid};
+    }
 }
 
 impl SyncData {

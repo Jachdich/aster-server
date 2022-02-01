@@ -195,6 +195,26 @@ async fn process_command(msg: &String, state: Arc<Mutex<Shared>>, peer: &mut Pee
             peer.lines.send(json::object!{command: "Goodbye"}.dump()).await?;
         }
 
+        "/get_emoji" => {
+            if argv.len() != 2 {
+                peer.lines.send(json::object!{command: "get_emoji", code: -1, message: "Wrong number of arguments"}.dump()).await?;
+            } else {
+                if let Ok(uuid) = argv[1].parse::<i64>() {
+                    let results = schema::emojis::table
+                        .filter(schema::emojis::uuid.eq(uuid))
+                        .limit(1)
+                        .load::<Emoji>(&state_lock.conn).unwrap();
+                    if results.len() < 1 {
+                        peer.lines.send(json::object!{command: "get_emoji", code: -2, message: "Emoji not found"}.dump()).await?;
+                    } else {
+                        peer.lines.send(json::object!{command: "get_emoji", code: 0, data: results[0].as_json()}.dump()).await?;
+                    }
+                } else {
+                    peer.lines.send(json::object!{command: "get_emoji", code: -1, message: "Argument is not an integer"}.dump()).await?;
+                }
+            }
+        }
+
         _ => {}
     }
 
@@ -418,7 +438,8 @@ async fn process_command(msg: &String, state: Arc<Mutex<Shared>>, peer: &mut Pee
                 }
             } else {
                 peer.lines.send(json::object!{request: "sync_add_server", code: -1, message: "Invalid JSON data"}.dump()).await?;
-            }        }
+            }
+        }
 
         "/sync_get_servers" => {
             let servers = schema::sync_servers::table

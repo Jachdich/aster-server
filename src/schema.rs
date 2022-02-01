@@ -6,6 +6,14 @@ table! {
 }
 
 table! {
+    emojis (uuid) {
+        uuid -> BigInt,
+        name -> Text,
+        data -> Text,
+    }
+}
+
+table! {
     groups (uuid) {
         uuid -> BigInt,
         permissions -> BigInt,
@@ -71,6 +79,7 @@ joinable!(users -> groups (group_uuid));
 
 allow_tables_to_appear_in_same_query!(
     channels,
+    emojis,
     groups,
     messages,
     sync_data,
