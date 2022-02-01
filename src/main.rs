@@ -435,20 +435,7 @@ async fn process_command(msg: &String, state: Arc<Mutex<Shared>>, peer: &mut Pee
         "/sync_get" => {
             let sync_data = state_lock.get_sync_data(&peer.user);
             if let Some(sync_data) = sync_data {
-                let response: &str = match argv[1] {
-                    "uname" => &sync_data.uname,
-                    "pfp" => &sync_data.pfp,
-                    _ => {
-                        //TODO overkill?
-                        peer.lines.send(json::object!{request: "sync_get", key: argv[1], message: "Invalid key", code: -1}.dump()).await?;
-                        ""
-                    }
-                };
-
-                //TODO unset properties will trigger this if statement to not send the data
-                if response != "" {
-                    peer.lines.send(json::object!{request: "sync_get", key: argv[1], data: response, code: 0}.dump()).await?;
-                }
+                peer.lines.send(json::object!{request: "sync_get", uname: sync_data.uname.as_str(), pfp: sync_data.pfp.as_str(), code: 0}.dump()).await?;
             } else {
                 peer.lines.send(json::object!{request: "sync_get", key: argv[1], message: "User has no sync data", code: -2}.dump()).await?;
             }
