@@ -380,7 +380,7 @@ async fn process_command(msg: &String, state: Arc<Mutex<Shared>>, peer: &mut Pee
 
         "/sync_set" => {
             if argv.len() < 3 {
-                peer.lines.send(json::object!{request: "sync_get", message: "Too few arguments", code: -1}.dump()).await?; 
+                peer.lines.send(json::object!{command: "sync_set", message: "Too few arguments", code: -1}.dump()).await?; 
             } else {
                 let val = argv[2..].join(" ");
                 let mut sync_data = match state_lock.get_sync_data(&peer.user) {
@@ -396,7 +396,7 @@ async fn process_command(msg: &String, state: Arc<Mutex<Shared>>, peer: &mut Pee
                     "uname" => sync_data.uname = val,
                     "pfp" => sync_data.pfp = val,
                     _ => //TODO overkill?
-                         peer.lines.send(json::object!{request: "sync_get", key: argv[1], message: "Invalid key", code: -1}.dump()).await?,   
+                         peer.lines.send(json::object!{command: "sync_get", key: argv[1], message: "Invalid key", code: -1}.dump()).await?,   
                 }
 
                 state_lock.update_sync_data(sync_data);
@@ -419,7 +419,7 @@ async fn process_command(msg: &String, state: Arc<Mutex<Shared>>, peer: &mut Pee
                 let server = SyncServer::from_json(&json_data, peer.user, idx);
                 state_lock.insert_sync_server(server);
             } else {
-                peer.lines.send(json::object!{request: "sync_add_server", code: -1, message: "Invalid JSON data"}.dump()).await?;
+                peer.lines.send(json::object!{command: "sync_add_server", code: -1, message: "Invalid JSON data"}.dump()).await?;
             }
         }
 
@@ -437,7 +437,7 @@ async fn process_command(msg: &String, state: Arc<Mutex<Shared>>, peer: &mut Pee
                     idx += 1;
                 }
             } else {
-                peer.lines.send(json::object!{request: "sync_add_server", code: -1, message: "Invalid JSON data"}.dump()).await?;
+                peer.lines.send(json::object!{command: "sync_add_server", code: -1, message: "Invalid JSON data"}.dump()).await?;
             }
         }
 
@@ -448,7 +448,7 @@ async fn process_command(msg: &String, state: Arc<Mutex<Shared>>, peer: &mut Pee
                     .load::<SyncServerQuery>(&state_lock.conn).unwrap();
 
             peer.lines.send(json::object!{
-                    request: "sync_get_servers",
+                    command: "sync_get_servers",
                     data: servers.iter().map(|x| SyncServer::from(x.clone()).as_json()).collect::<Vec<json::JsonValue>>(),
                     code: 0}.dump()).await?;
         }
@@ -456,14 +456,16 @@ async fn process_command(msg: &String, state: Arc<Mutex<Shared>>, peer: &mut Pee
         "/sync_get" => {
             let sync_data = state_lock.get_sync_data(&peer.user);
             if let Some(sync_data) = sync_data {
-                peer.lines.send(json::object!{request: "sync_get", uname: sync_data.uname.as_str(), pfp: sync_data.pfp.as_str(), code: 0}.dump()).await?;
+                peer.lines.send(json::object!{command: "sync_get", uname: sync_data.uname.as_str(), pfp: sync_data.pfp.as_str(), code: 0}.dump()).await?;
             } else {
-                peer.lines.send(json::object!{request: "sync_get", key: argv[1], message: "User has no sync data", code: -2}.dump()).await?;
+                peer.lines.send(json::object!{command: "sync_get", message: "User has no sync data", code: -2}.dump()).await?;
             }
         }
-        _ => {
-            peer.lines.send(json::object!{request: argv[0], message: "Invalid command", code: -1}.dump()).await?;
-        }
+        _ => () /*
+            let mut req = argv[0].to_string();
+            req.remove(0);
+            peer.lines.send(json::object!{command: req, message: "Invalid command", code: -1}.dump()).await?;
+        }*/
     }
     Ok(())
 }
