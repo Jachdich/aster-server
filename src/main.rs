@@ -214,7 +214,12 @@ async fn process_command(msg: &String, state: Arc<Mutex<Shared>>, peer: &mut Pee
                 }
             }
         }
-
+        "/list_emoji" => {
+            let results = schema::emojis::table.load::<Emoji>(&state_lock.conn).unwrap();
+            peer.lines.send(json::object!{command: "list_emoji", code: 0,
+                data: results.iter().map(|res| json::object!{name: res.name.clone(), uuid: res.uuid}).collect::<Vec<json::JsonValue>>()
+            }.dump()).await?;
+        }
         _ => {}
     }
 
@@ -317,13 +322,9 @@ async fn process_command(msg: &String, state: Arc<Mutex<Shared>>, peer: &mut Pee
         }
         
         "/online" => {
-            let mut res = json::JsonValue::new_array();
-            for user in state_lock.online.iter() {
-                res.push(user + 0).unwrap();
-            }
             let final_json = json::object!{
                 command: "online",
-                data: res,
+                data: state_lock.online.clone(),
             };
             peer.lines.send(&final_json.dump()).await?;
         }
@@ -461,11 +462,7 @@ async fn process_command(msg: &String, state: Arc<Mutex<Shared>>, peer: &mut Pee
                 peer.lines.send(json::object!{command: "sync_get", message: "User has no sync data", code: -2}.dump()).await?;
             }
         }
-        _ => () /*
-            let mut req = argv[0].to_string();
-            req.remove(0);
-            peer.lines.send(json::object!{command: req, message: "Invalid command", code: -1}.dump()).await?;
-        }*/
+        _ => ()
     }
     Ok(())
 }
