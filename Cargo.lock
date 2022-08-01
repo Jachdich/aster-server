@@ -756,6 +756,7 @@ dependencies = [
  "diesel",
  "futures",
  "json",
+ "lazy_static",
  "native-tls",
  "num",
  "num-derive",

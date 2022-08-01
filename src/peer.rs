@@ -12,6 +12,7 @@ use std::sync::Arc;
 use chrono;
 use crate::shared::Shared;
 use crate::message::*;
+use crate::helper::NO_UID;
 
 pub struct Peer {
     pub lines: Framed<TlsStream<TcpStream>, LinesCodec>,
@@ -43,10 +44,8 @@ impl Pontoon {
 }
 
 impl Peer {
-    pub async fn new(state: Arc<Mutex<Shared>>, lines: Framed<TlsStream<TcpStream>, LinesCodec>, channel: i64, addr: SocketAddr
-    ) -> std::io::Result<Peer> {
+    pub async fn new(state: Arc<Mutex<Shared>>, lines: Framed<TlsStream<TcpStream>, LinesCodec>, addr: SocketAddr) -> std::io::Result<Peer> {
         let (tx, mut rx) = mpsc::unbounded_channel::<MessageType>();
-        state.lock().await.channels.get_mut(&channel).unwrap().peers.insert(addr, tx.clone());
 
         let rx = Box::pin(async_stream::stream! {
             while let Some(item) = rx.recv().await {
@@ -54,21 +53,31 @@ impl Peer {
             }
         });
 
-        Ok(Peer {lines, rx, tx, channel, vcchannel: i64::MAX, user: i64::MAX, addr, logged_in: false})
+        Ok(Peer {
+            lines, rx, tx, addr,
+            channel: NO_UID,
+            vcchannel: NO_UID,
+            user: NO_UID,
+            logged_in: false
+        })
     }
 
     pub fn channel(&mut self, new_channel: i64, state: &mut tokio::sync::MutexGuard<'_, Shared>) {
-        //let tx = state.channels.get_mut(&self.channel).unwrap().peers.get(&self.addr).unwrap().clone();
-        state.channels.get_mut(&self.channel).unwrap().peers.remove(&self.addr);
-        state.channels.get_mut(&new_channel).unwrap().peers.insert(self.addr, self.tx.clone());
+        //TODO assuming self.channel and new_channel are both valid. Fix plz
+        if self.channel != NO_UID {
+            state.channels.get_mut(&self.channel).unwrap().peers.remove(&self.addr);
+        }
+        if new_channel != NO_UID {
+            state.channels.get_mut(&new_channel).unwrap().peers.insert(self.addr, self.tx.clone());
+        }
         self.channel = new_channel.to_owned();
     }
 
     pub fn vcchannel(&mut self, chan: i64, state: &mut tokio::sync::MutexGuard<'_, Shared>) {
-        if self.vcchannel != i64::MAX {
+        if self.vcchannel != NO_UID {
             state.channels.get_mut(&self.channel).unwrap().peers.remove(&self.addr);
         }
-        if chan != i64::MAX {
+        if chan != NO_UID {
             state.channels.get_mut(&chan).unwrap().peers.insert(self.addr, self.tx.clone());
         }
         self.vcchannel = chan.to_owned();

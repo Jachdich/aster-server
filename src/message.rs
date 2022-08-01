@@ -30,7 +30,7 @@ pub struct CookedMessageInsertable {
     pub date: i32,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum MessageType {
     Raw(RawMessage),
     Cooked(CookedMessage),
@@ -43,6 +43,19 @@ pub enum Message {
 }
 
 impl CookedMessage {
+    /// Returns a [`JsonValue`] representing a `CookedMessage` object
+    /// # Panics
+    ///
+    /// Panics never
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let message = CookedMessage::from_json(some_json);
+    /// let val: json::JsonValue = message.as_json();
+    /// assert(some_json == val);
+    /// ```
+    /// [`JsonValue`]: json::JsonValue
     pub fn as_json(&self) -> json::JsonValue {
         return json::object!{
             uuid: self.uuid,

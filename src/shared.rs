@@ -1,4 +1,3 @@
-use crate::serverproperties::ServerProperties;
 use crate::sharedchannel::SharedChannel;
 use crate::schema;
 use std::collections::HashMap;
@@ -7,24 +6,24 @@ use crate::models::*;
 use crate::message::*;
 use std::net::{SocketAddr, IpAddr, Ipv4Addr};
 use crate::peer::Pontoon;
+use crate::CONF;
 
 pub struct Shared {
     pub channels: HashMap<i64, SharedChannel>,
     pub online: Vec<i64>,
     pub conn: SqliteConnection,
-    pub properties: ServerProperties,
     pub peers: Vec<Pontoon>,
 }
 
 impl Shared {
     pub fn new() -> Self {
         let channels: HashMap<i64, SharedChannel> = HashMap::new();
-        let sqlitedb = SqliteConnection::establish("aster.db").expect(&format!("Error connecting to the database file {}", "aster.db"));
+        let sqlitedb = SqliteConnection::establish(&CONF.database_file).expect(&format!("Error connecting to the database file {}", &CONF.database_file));
+
         Shared {
             channels,
             online: Vec::new(),
             conn: sqlitedb,
-            properties: ServerProperties::load(),
             peers: Vec::new(),
         }
     }
@@ -61,6 +60,7 @@ impl Shared {
      	}
     }
 
+    //TODO WHAT??
     // fn save(&mut self) {
         // 
     // }
@@ -108,58 +108,43 @@ impl Shared {
         }
     }
 
-    pub fn get_channel_by_name(&self, channel: &String) -> Channel {
+    pub fn get_channel_by_name(&self, channel: &String) -> Result<Channel, diesel::result::Error> {
         let mut results = schema::channels::table
             .filter(schema::channels::name.eq(channel))
             .limit(1)
-            .load::<Channel>(&self.conn)
-            .expect("Channel does not exist");
+            .load::<Channel>(&self.conn)?;
 
-        return results.remove(0);
+        return Ok(results.remove(0));
     }
 
-    pub fn insert_channel(&self, channel: Channel) {
-        let _ = diesel::insert_into(schema::channels::table)
-            .values(&channel)
-            .execute(&self.conn)
-            .expect("Error appending channel");
+    pub fn insert_channel(&self, channel: Channel) -> Result<usize, diesel::result::Error> {
+        diesel::insert_into(schema::channels::table).values(&channel).execute(&self.conn)
     }
 
-    pub fn insert_user(&self, user: User) {
-        let _ = diesel::insert_into(schema::users::table)
-            .values(&user)
-            .execute(&self.conn)
-            .expect("Error appending user");
+    pub fn insert_user(&self, user: User) -> Result<usize, diesel::result::Error> {
+        diesel::insert_into(schema::users::table).values(&user).execute(&self.conn)
     }
 
-    pub fn insert_sync_data(&self, data: &SyncData) {
-        let _ = diesel::insert_into(schema::sync_data::table)
-            .values(data)
-            .execute(&self.conn)
-            .expect("Error appending sync data");
+    pub fn insert_sync_data(&self, data: &SyncData) -> Result<usize, diesel::result::Error> {
+        diesel::insert_into(schema::sync_data::table).values(data).execute(&self.conn)
     }
 
-    pub fn insert_sync_server(&self, data: SyncServer) {
-        let _ = diesel::insert_into(schema::sync_servers::table)
-            .values(data)
-            .execute(&self.conn)
-            .expect("Error appending sync server");
+    pub fn insert_sync_server(&self, data: SyncServer) -> Result<usize, diesel::result::Error> {
+        diesel::insert_into(schema::sync_servers::table).values(data).execute(&self.conn)
     }
 
-    pub fn update_user(&self, user: User) {
+    pub fn update_user(&self, user: User) -> Result<usize, diesel::result::Error> {
         diesel::update(schema::users::table.find(user.uuid))
             .set((schema::users::name.eq(user.name),
-            schema::users::pfp.eq(user.pfp),
-            schema::users::group_uuid.eq(user.group_uuid)))
+                  schema::users::pfp.eq(user.pfp),
+                  schema::users::group_uuid.eq(user.group_uuid)))
             .execute(&self.conn)
-            .expect(&format!("Unable to find user {}", user.uuid));
     }
 
-    pub fn update_sync_data(&self, data: SyncData) {
+    pub fn update_sync_data(&self, data: SyncData) -> Result<usize, diesel::result::Error> {
         diesel::update(schema::sync_data::table.find(data.user_uuid))
             .set((schema::sync_data::uname.eq(data.uname),
                   schema::sync_data::pfp.eq(data.pfp)))
             .execute(&self.conn)
-            .expect(&format!("Unable to find user {} (update sync_data)", data.user_uuid));
     }
 }
