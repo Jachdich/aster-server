@@ -9,4 +9,5 @@ pub fn gen_uuid() -> i64 {
 
 pub type Tx = mpsc::UnboundedSender<MessageType>;
 pub type LockedState<'a> = tokio::sync::MutexGuard<'a, Shared>;
+pub type JsonValue = serde_json::Value;
 pub const NO_UID: i64 = 0;

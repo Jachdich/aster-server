@@ -6,6 +6,7 @@ use crate::schema::sync_data;
 use crate::schema::sync_servers;
 use crate::schema::emojis;
 use rand::prelude::*;
+use serde::{Deserialize, Serialize};
 
 #[derive(Queryable, Insertable, Clone)]
 #[table_name="channels"]
@@ -74,7 +75,7 @@ pub struct SyncServerQuery {
     pub rowid: i32,
 }
 
-#[derive(Queryable, Insertable, Clone)]
+#[derive(Queryable, Insertable, Clone, Serialize)]
 #[table_name="emojis"]
 pub struct Emoji {
     pub uuid: i64,
@@ -91,10 +92,6 @@ impl Emoji {
         Self {
             uuid, name, data
         }
-    }
-    
-    pub fn as_json(&self) -> json::JsonValue {
-        return json::object!{data: self.data.clone(), name: self.name.clone(), uuid: self.uuid};
     }
 }
 

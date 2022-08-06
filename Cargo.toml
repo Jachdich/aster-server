@@ -18,12 +18,14 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.2.7", default-features = false, features = ["fmt", "ansi", "env-filter", "chrono", "tracing-log"] }
 bytes = "1.0.0"
 futures = { version = "0.3.0", features = ["thread-pool"]}
-json = "*"
 rand = "*"
 base64 = "*"
 diesel = { version = "*", features = ["sqlite", "numeric"]}
-num = "*"
-num-traits = "*"
-num-derive = "*"
+#num = "*"
+#num-traits = "*"
+#num-derive = "*"
 chrono = "*"
 lazy_static = "*"
+sodiumoxide = "*"
+serde = "*"
+serde_json = "*"

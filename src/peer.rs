@@ -18,7 +18,6 @@ pub struct Peer {
     pub lines: Framed<TlsStream<TcpStream>, LinesCodec>,
     pub rx: Pin<Box<dyn Stream<Item = MessageType> + Send>>,
     pub tx: mpsc::UnboundedSender<MessageType>,
-    pub channel: i64,
     pub vcchannel: i64,
     pub user: i64,
     pub addr: SocketAddr,
@@ -55,33 +54,31 @@ impl Peer {
 
         Ok(Peer {
             lines, rx, tx, addr,
-            channel: NO_UID,
-            vcchannel: NO_UID,
             user: NO_UID,
             logged_in: false
         })
     }
 
-    pub fn channel(&mut self, new_channel: i64, state: &mut tokio::sync::MutexGuard<'_, Shared>) {
-        //TODO assuming self.channel and new_channel are both valid. Fix plz
-        if self.channel != NO_UID {
-            state.channels.get_mut(&self.channel).unwrap().peers.remove(&self.addr);
-        }
-        if new_channel != NO_UID {
-            state.channels.get_mut(&new_channel).unwrap().peers.insert(self.addr, self.tx.clone());
-        }
-        self.channel = new_channel.to_owned();
-    }
+    // pub fn channel(&mut self, new_channel: i64, state: &mut tokio::sync::MutexGuard<'_, Shared>) {
+        // //TODO assuming self.channel and new_channel are both valid. Fix plz
+        // if self.channel != NO_UID {
+            // state.channels.get_mut(&self.channel).unwrap().peers.remove(&self.addr);
+        // }
+        // if new_channel != NO_UID {
+            // state.channels.get_mut(&new_channel).unwrap().peers.insert(self.addr, self.tx.clone());
+        // }
+        // self.channel = new_channel.to_owned();
+    // }
 
-    pub fn vcchannel(&mut self, chan: i64, state: &mut tokio::sync::MutexGuard<'_, Shared>) {
-        if self.vcchannel != NO_UID {
-            state.channels.get_mut(&self.channel).unwrap().peers.remove(&self.addr);
-        }
-        if chan != NO_UID {
-            state.channels.get_mut(&chan).unwrap().peers.insert(self.addr, self.tx.clone());
-        }
-        self.vcchannel = chan.to_owned();
-    }
+    // pub fn vcchannel(&mut self, chan: i64, state: &mut tokio::sync::MutexGuard<'_, Shared>) {
+        // if self.vcchannel != NO_UID {
+            // state.channels.get_mut(&self.channel).unwrap().peers.remove(&self.addr);
+        // }
+        // if chan != NO_UID {
+            // state.channels.get_mut(&chan).unwrap().peers.insert(self.addr, self.tx.clone());
+        // }
+        // self.vcchannel = chan.to_owned();
+    // }
 }
 
 
@@ -97,15 +94,7 @@ impl Stream for Peer {
         let result: Option<_> = futures::ready!(Pin::new(&mut self.lines).poll_next(cx));
 
         Poll::Ready(match result {
-            Some(Ok(message)) => Some(Ok(Message::Broadcast(
-                                         MessageType::Cooked(CookedMessage{
-                                            uuid: gen_uuid(),
-                                            content: message,
-                                            author_uuid: self.user,
-                                            channel_uuid: self.channel,
-                                            date: chrono::offset::Utc::now().timestamp() as i32,
-                                            rowid: 0,
-                                            })))),
+            Some(Ok(message)) => Some(Ok(Message::Broadcast(message)))),
             Some(Err(e)) => Some(Err(e)),
             None => None,
         })

@@ -9,7 +9,6 @@ use crate::peer::Pontoon;
 use crate::CONF;
 
 pub struct Shared {
-    pub channels: HashMap<i64, SharedChannel>,
     pub online: Vec<i64>,
     pub conn: SqliteConnection,
     pub peers: Vec<Pontoon>,
@@ -17,11 +16,9 @@ pub struct Shared {
 
 impl Shared {
     pub fn new() -> Self {
-        let channels: HashMap<i64, SharedChannel> = HashMap::new();
-        let sqlitedb = SqliteConnection::establish(&CONF.database_file).expect(&format!("Error connecting to the database file {}", &CONF.database_file));
+        let sqlitedb = SqliteConnection::establish(&CONF.database_file).expect(&format!("Fatal(Shared::new) connecting to the database file {}", &CONF.database_file));
 
         Shared {
-            channels,
             online: Vec::new(),
             conn: sqlitedb,
             peers: Vec::new(),
@@ -32,38 +29,28 @@ impl Shared {
         let channels = self.get_channels();
         if channels.len() == 0 {
             let new_channel = Channel::new("general");
-            self.channels.insert(new_channel.uuid, SharedChannel::new(new_channel.clone()));
             self.insert_channel(new_channel);
-        } else {
-            for channel in channels {
-                self.channels.insert(channel.uuid, SharedChannel::new(channel));
-            }
         }
     }
 
-    pub fn broadcast_unread(&self, target_channel: i64, why_the_fuck_do_i_need_this: &tokio::sync::MutexGuard<'_, Shared>) {
-    	let name = self.channels.get(&target_channel).unwrap().channel.name.to_owned();
-    	for (uuid, channel) in &self.channels {
-    		if uuid != &target_channel {
-    			channel.broadcast(SocketAddr::new(IpAddr::V4(Ipv4Addr::new(255, 255, 255, 255)), 0),
-    			MessageType::Raw(RawMessage{
-    				content: json::object!{command: "unread", channel: name.to_owned()}.dump()
-    			}), why_the_fuck_do_i_need_this);
-    		}
+    pub fn send_to_all(&self, message: MessageType) {
+    	for peer in self.peers.iter() {
+            peer.tx.send(&message);
     	}
-    }
-
-    pub fn broadcast_to_all(&self, message: MessageType, why_the_fuck_do_i_need_this: &tokio::sync::MutexGuard<'_, Shared>) {
-    	for (_uuid, channel) in &self.channels {
-			channel.broadcast(SocketAddr::new(IpAddr::V4(Ipv4Addr::new(255, 255, 255, 255)), 0),
-			message.clone(), why_the_fuck_do_i_need_this);
-     	}
     }
 
     //TODO WHAT??
     // fn save(&mut self) {
         // 
     // }
+
+    pub fn get_user_by_name(&self, name: &str) -> Option<User> {
+        let mut query_res = schema::users::table
+                        .filter(schema::users::name.eq(name))
+                        .limit(1)
+                        .load::<User>(&self.conn).ok()?;
+        query_res.pop()
+    }
 
     pub fn get_users(&self) -> Vec<User> {
         return schema::users::table.load::<User>(&self.conn).unwrap();
@@ -84,6 +71,14 @@ impl Shared {
     }
 
     //pub fn get_password(&self, user: &i64) -> 
+
+    pub fn add_to_history(&self, msg: CookedMessage) {
+        let new_msg = CookedMessageInsertable::new(msg);
+        let _ = diesel::insert_into(schema::messages::table)
+            .values(&new_msg)
+            .execute(conn)
+            .expect("Error appending to history");
+    }
 
     pub fn get_channel(&self, channel: &i64) -> Channel {
         let mut results = schema::channels::table

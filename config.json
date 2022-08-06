@@ -1,0 +1,9 @@
+{
+    "address": "0.0.0.0",
+    "port": 2345,
+    "voice_port": 5432,
+    "name": "Aster Server",
+    "icon": "icon.png",
+    "default_pfp": "default.png",
+    "database_file": "aster.db"
+}

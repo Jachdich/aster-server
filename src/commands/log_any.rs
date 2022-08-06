@@ -1,12 +1,7 @@
 use crate::schema;
-use crate::models::{User, Emoji, SyncData, SyncServer, SyncServerQuery};
-use crate::helper::{gen_uuid, LockedState};
-use crate::shared::Shared;
-use crate::peer::Peer;
-use crate::message::{RawMessage, CookedMessage, MessageType};
+use crate::models::Emoji;
+use crate::helper::LockedState;
 use crate::commands::Status;
-use std::error::Error;
-use futures::SinkExt;
 use diesel::prelude::*;
 use crate::CONF;
 

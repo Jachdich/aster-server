@@ -10,10 +10,12 @@ use log_out::*;
 
 use crate::schema;
 use crate::models::{User, Emoji, SyncData, SyncServer, SyncServerQuery};
-use crate::helper::{gen_uuid, LockedState};
+use crate::helper::{gen_uuid, LockedState, JsonValue};
 use crate::shared::Shared;
 use crate::peer::Peer;
 use crate::message::{RawMessage, CookedMessage, MessageType};
+use crate::CONF;
+use crate::helper::NO_UID;
 
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -21,63 +23,176 @@ use std::error::Error;
 use diesel::prelude::*;
 use futures::SinkExt;
 use std::io::Read;
+use sodiumoxide::crypto::pwhash::argon2id13;
+use serde_json::json;
+use serde::{Deserialize, Serialize};
 
 pub enum Status {
     Ok = 200,
     BadRequest = 400,
-    NotFound = 404,
     InternalError = 500,
     Unauthorised = 401,
     Forbidden = 403,
+    NotFound = 404,
+    MethodNotAllowed = 405,
 }
 
+pub trait Packet {
+    pub fn execute(&self,
+                   state_lock: &mut LockedState,
+                   peer: &mut Peer
+    ) -> JsonValue;
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct RegisterPacket { pub passwd: String, pub name: String }
+
 fn send_metadata(state_lock: &LockedState, peer: &Peer) {
-    let meta = json::array![state_lock.get_user(&peer.user).as_json()];
-    state_lock.channels.get(&peer.channel).unwrap().broadcast(
-        peer.addr,
-        MessageType::Raw(RawMessage{content: json::object!{command: "metadata", data: meta}.dump()}),
-        &state_lock);
+    let meta = json!([state_lock.get_user(&peer.user).as_json()]);
+    state_lock.send_to_all(MessageType::Raw(json!({"command": "metadata", "data": meta})));
 }
 
 pub fn send_online(state_lock: &LockedState) {
-    let mut res = json::JsonValue::new_array();
+    let mut res = json!([]);
     for user in state_lock.online.iter() {
         res.push(user + 0).unwrap();
     }
-    let final_json = json::object!{
-        command: "online",
-        data: res,
-    };
-    state_lock.broadcast_to_all(MessageType::Raw(RawMessage{content: final_json.dump()}), state_lock);
+    let final_json = json!({
+        "command": "online",
+        "data": res,
+    });
+    state_lock.send_to_all(MessageType::Raw(final_json));
 }
-/*
-pub fn register() -> json::JsonValue {
-    let uuid = gen_uuid();
-    let user = User{
-        name: json::stringify(uuid),
-        pfp: CONF.default_pfp.to_owned(),
-        uuid: uuid,
-        group_uuid: 0,
-    };
 
-    state_lock.insert_user(user);
-    peer.lines.send(json::object!{"command": "set", "key": "self_uuid", "value": uuid}.dump()).await?;
-    peer.logged_in = true;
-    peer.user = uuid;
+fn make_hash_b64(passwd: &str) -> String {
+    sodiumoxide::init().expect("Fatal(hash) sodiumoxide couldn't be initialised");
+    let hash = argon2id13::pwhash(
+        passwd.as_bytes(),
+        argon2id13::OPSLIMIT_INTERACTIVE,
+        argon2id13::MEMLIMIT_INTERACTIVE
+    ).expect("Fatal(hash) argon2id13::pwhash failed");
+    base64::encode(&hash.0)
+}
 
-    if let Some(_) = state_lock.online.iter().position(|x| *x == peer.user) {
-        println!("Error: user already online???");
+impl Packet for RegisterPacket {
+    pub fn execute(&self, state_lock: &mut LockedState, peer: &mut Peer) -> JsonValue {
+        if peer.logged_in {
+            //registering doesn't make sense when logged in
+            return json!({"command": "register", "status": Status::MethodNotAllowed as i32});
+        }
+    
+        let uuid = gen_uuid();
+        let user = User{
+            name: self.name,
+            pfp: CONF.default_pfp.to_owned(),
+            uuid,
+            group_uuid: 0,
+        };
+
+        state_lock.insert_user(user);
+        peer.logged_in = true;
+        peer.user = uuid;
+
+        if state_lock.online.iter().any(|x| *x == peer.user) {
+            println!("Error(register): user already online?");
+        } else {
+            state_lock.online.push(peer.user);
+        }
+
+        send_metadata(state_lock, peer);
+        send_online(state_lock);
+
+        json!{command: "register", status: Status::Ok as i32, uuid: uuid}
+    }
+}
+
+pub fn login(state_lock: &mut LockedState, peer: &mut Peer, packet: &json::JsonValue, logged: bool) -> json::JsonValue {
+    if logged {
+        //logging in doesn't make sense when already logged in
+        return json::object!{command: "login", status: Status::MethodNotAllowed as i32};
+    }
+    
+    if let Some(password) = packet["password"].as_str() {
+        let uuid = if let Some(uname) = packet["uname"].as_str() {
+            if let Some(user) = state_lock.get_user_by_name(uname) { user.uuid }
+            else {
+                return json::object!{command: "login", status: Status::NotFound as i32};
+            }
+        } else if let Some(uuid) = packet["uuid"].as_i64() {
+            uuid
+        } else {
+            //neither uname nor uuid were provided
+            return json::object!{command: "login", status: Status::BadRequest as i32};
+        };
+
+        //TODO confirm password
+        peer.user = uuid;
+        peer.logged_in = true;
+        if state_lock.online.iter().any(|x| *x == peer.user) {
+            println!("Error(login): user already online?");
+        } else {
+            state_lock.online.push(peer.user);
+        }
+        send_metadata(&state_lock, peer);
+        send_online(&state_lock);
+        json::object!{command: "login", status: Status::Ok as i32, uuid: uuid}
+        
     } else {
-        state_lock.online.push(peer.user);
+        //require password
+        json::object!{command: "login", status: Status::BadRequest as i32}
+    }
+}
+
+pub fn nick(state_lock: &LockedState, peer: &mut Peer, packet: &json::JsonValue, logged: bool) -> json::JsonValue {
+    if !logged {
+        return json::object!{command: "nick", status: Status::Forbidden as i32};
     }
 
-    send_metadata(&state_lock, peer);
-    send_online(&state_lock);
+    if let Some(name) = packet["nick"].as_str() {
+        let mut user = state_lock.get_user(&peer.user);
+        user.name = name.to_string();
+        state_lock.update_user(user);
+        send_metadata(&state_lock, peer);
+        json::object!{command: "nick", status: Status::Ok as i32}
+    } else {
+        json::object!{command: "nick", status: Status::BadRequest as i32}
+    }
 }
 
-*/
+pub fn online(state_lock: &LockedState, logged: bool) -> json::JsonValue {
+    if !logged {
+        return json::object!{command: "online", status: Status::Forbidden as i32};
+    }
+
+    json::object!{
+        command: "online",
+        data: state_lock.online.clone(),
+        status: Status::Ok as i32,
+    }
+}
+
+pub fn content() -> json::JsonValue {
+    if !logged {
+        return json::object!{command: "content", status: Status::Forbidden as i32}
+    }
+    if let Some(packet["content"].is_str() && packet["channel_uuid"].is_number() {
+        let msg = CookedMessage {
+            uuid: gen_uuid(),
+            content: packet["content"].as_str().unwrap().to_owned(),
+            author_uuid: peer.user,
+            channel_uuid,
+            date: chrono::offset::Utc::now().timestamp() as i32,
+        };
+        state_lock.send_to_all(MessageType::Cooked(msg));
+        json::object!{command: "content", status: Status::Ok as i32}
+    } else {
+        json::object!{command: "content", status: Status::BadRequest as i32}
+    }
+}
+
 pub async fn process_command(msg: &String, state: Arc<Mutex<Shared>>, peer: &mut Peer) -> Result<(), Box<dyn Error>> {
-    let packet = json::parse(msg);
+    let packet_json = json::parse(msg);
+    
 
     let response = if let Ok(packet) = packet {
 
@@ -86,112 +201,29 @@ pub async fn process_command(msg: &String, state: Arc<Mutex<Shared>>, peer: &mut
         
         
         match packet["command"].as_str() {
-            //log in/out
-            Some("/get_all_metadata") => get_all_metadata(&state_lock),
-            Some("/get_icon")         => get_icon(&state_lock),
-            Some("/get_name")         => get_name(&state_lock),
-            Some("/get_channels")     => get_channels(&state_lock),
-            Some("/ping")             => json::object!{command: "pong"}, //TODO should these be functions?
-            Some("/leave")            => json::object!{command: "Goodbye"}, //TODO actually leave?
-            Some("/get_emoji")        => get_emoji(&state_lock, &packet),
-            Some("/list_emoji")       => list_emoji(&state_lock),
+            //log any
+            Some("get_all_metadata") => get_all_metadata(&state_lock),
+            Some("get_icon")         => get_icon(&state_lock),
+            Some("get_name")         => get_name(&state_lock),
+            Some("get_channels")     => get_channels(&state_lock),
+            Some("ping")             => json::object!{command: "pong"}, //TODO should these be functions?
+            Some("leave")            => json::object!{command: "Goodbye"}, //TODO actually leave?
+            Some("get_emoji")        => get_emoji(&state_lock, &packet),
+            Some("list_emoji")       => list_emoji(&state_lock),
 
             //log out
-
+            Some("register")        => register(&mut state_lock, peer, &packet, logged),
+            Some("login")           => login(&mut state_lock, peer, &packet, logged),
             //log in
+            Some("nick")            => nick(state_lock, peer, logged),
+            Some("online")          => online(state_lock, logged),
+            Some("content")         => content(),
             None                    => json::object!{command: "unknown", code: Status::BadRequest as i32},
             _                       => json::object!{command: packet["command"].as_str().unwrap(), code: Status::BadRequest as i32},
         }
 /*
-        //commands that can be run only if the user is logged out
-        if !peer.logged_in {
-            match argv[0] {
-                "/register" => {
-                    
-                }
-
-                "/login" => {
-                    //log in an existing user
-                    let uuid = argv[1].parse::<i64>().unwrap();
-                    if argv.len() <= 2 {
-                        peer.lines.send(json::object!{"warning": "Logging in without password is deprecated and WILL BE REMOVED SOON. Please update your client"}.dump()).await?;
-                    } else {
-                        let password = argv[2];
-                        let hashed_password = "";
-                        //if hashed_password == state_lock.get_password(uuid);
-                    }
-                    peer.lines.send(json::object!{"command": "set", "key": "self_uuid", "value": uuid}.dump()).await?;
-                    peer.user = uuid;
-                    peer.logged_in = true;
-
-                    state_lock.online.push(peer.user);
-                    send_metadata(&state_lock, peer);
-                    send_online(&state_lock);
-                }
-
-                "/login_username" => {
-                    if argv.len() <= 2 {
-                        peer.lines.send(json::object!{"warning": "Logging in without password is deprecated and WILL BE REMOVED SOON. Please update your client"}.dump()).await?;
-                    } else {
-                        let password = argv[2];
-                        let hashed_password = "";
-                        //if hashed_password == state_lock.get_password(uuid);
-                    }
-                    let uuid = schema::users::table.filter(schema::users::name.eq(argv[1])).limit(1).load::<User>(&state_lock.conn).unwrap()[0].uuid;
-                    peer.lines.send(json::object!{"command": "set", "key": "self_uuid", "value": uuid}.dump()).await?;
-                    peer.user = uuid;
-                    peer.logged_in = true;
-
-                    state_lock.online.push(peer.user);
-                    send_metadata(&state_lock, peer);
-                    send_online(&state_lock);
-                }
-
-                _ => {}
-            }
-            return Ok(());
-        }
-
         //commands that can be run only if the user is logged in
         match argv[0] {
-            "/nick" => {
-                if argv.len() < 2 {
-                    peer.lines.send("Usage: /nick <nickname>").await?;
-                } else {
-                    //let index = state_lock.online.iter().position(|x| *x == peer.user.name).unwrap();
-                    //state_lock.online.remove(index);
-                    let mut user = state_lock.get_user(&peer.user);
-                    user.name = argv[1].to_string();
-                    state_lock.update_user(user);
-                    send_metadata(&state_lock, peer);
-                    //state_lock.online.push(peer.user.name.clone());
-                }
-            }
-            
-            "/online" => {
-                let final_json = json::object!{
-                    command: "online",
-                    data: state_lock.online.clone(),
-                };
-                peer.lines.send(&final_json.dump()).await?;
-            }
-
-            "/join" => {
-                if argv.len() < 2 {
-                    peer.lines.send("Usage: /join <[#|&]channel>").await?;
-                } else {
-                    let status: Status;
-                    if let Ok(channel) = state_lock.get_channel_by_name(&argv[1].to_string()) {
-                        peer.channel(channel.uuid, &mut state_lock);
-                        status = Status::Ok;
-                    } else {
-                        status = Status::NotFound;
-                    }
-                    
-                    peer.lines.send(json::object!{command: "join", status: status as i32}.dump()).await?;
-               }
-            }
-
             "/history" => {
                 let a = argv[1].parse::<i64>().unwrap();
                 //let mut b = argv[2].parse::<usize>().unwrap();

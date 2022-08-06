@@ -19,7 +19,6 @@ use std::io::Read;
 pub mod schema;
 pub mod models;
 pub mod shared;
-pub mod serverproperties;
 pub mod sharedchannel;
 pub mod message;
 pub mod peer;
@@ -41,52 +40,43 @@ const API_VERSION_MINOR: u8 = 0;
 pub struct Config {
     pub addr: String,
     pub port: u16,
+    pub voice_port: u16,
     pub default_pfp: String,
     pub name: String,
     pub icon: String,
     pub database_file: String,
 }
 
-//used in conf file loading, read a file to a base64 string and panic with supplied message on any error
-fn read_b64_panic(fname: &str, msg: &str) -> String {
-    if let Ok(mut file) = std::fs::File::open(fname) {
-        let mut data = Vec::new();
-        file.read_to_end(&mut data).expect(msg);
-         base64::encode(data)
-    } else {
-        panic!("{}", msg);
-    }
+fn read_b64(fname: &str) -> Option<String> {
+    let mut file = std::fs::File::open(fname).ok()?;
+    let mut data = Vec::new();
+    file.read_to_end(&mut data).ok()?;
+    Some(base64::encode(data))
 }
 
 lazy_static! {
     pub static ref CONF: Config = {
-        match std::fs::File::open("config.json") {
-            Ok(mut file) => {
-                let mut data = String::new();
-                file.read_to_string(&mut data).expect("Couldn't read config.json!");
-                let json_value = json::parse(&data).expect("config.json is not valid json!");
+        let mut file = std::fs::File::open("config.json")
+            .expect("Couldn't find config.json!");
+        let mut data = String::new();
+        file.read_to_string(&mut data).expect("Couldn't read config.json!");
+        let json_value = json::parse(&data).expect("config.json is not valid json!");
 
-                let default_pfp_path = json_value["default_pfp"].as_str().expect("'default_pfp' value must be string");
-                let icon_path = json_value["icon"].as_str().expect("'icon' value must be string");
-                
-                let default_pfp: String = read_b64_panic(
-                        default_pfp_path,
-                        &format!("Default profile picture file '{}' not found!", default_pfp_path));
-                let icon: String = read_b64_panic(
-                        icon_path,
-                        &format!("Icon file '{}' not found!", icon_path));
-                
-                Config {
-                    addr: json_value["address"].as_str().expect("'address' value must be string").to_owned(),
-                    port: json_value["port"].as_u16().expect("'port' value must be 16 bit unsigned integer"),
-                    name: json_value["name"].as_str().expect("'name' value must be string").to_owned(),
-                    database_file: json_value["database_file"].as_str().expect("'database_file' value must be string").to_owned(),
-                    default_pfp, icon,
-                }
-            }
-            Err(_) => {
-                panic!("Couldn't find config.json!");
-            }
+        let default_pfp_path = json_value["default_pfp"].as_str().expect("'default_pfp' value must be string");
+        let icon_path = json_value["icon"].as_str().expect("'icon' value must be string");
+        
+        let default_pfp: String = read_b64(default_pfp_path)
+                .expect(&format!("Default profile picture file '{}' not found!", default_pfp_path));
+        let icon: String = read_b64(icon_path)
+                .expect(&format!("Icon file '{}' not found!", icon_path));
+        
+        Config {
+            addr: json_value["address"].as_str().expect("'address' value must be string").to_owned(),
+            name: json_value["name"].as_str().expect("'name' value must be string").to_owned(),
+            port: json_value["port"].as_u16().expect("'port' value must be 16 bit unsigned integer"),
+            voice_port: json_value["voice_port"].as_u16().expect("'voice_port' value must be 16 bit unsigned integer"),
+            database_file: json_value["database_file"].as_str().expect("'database_file' value must be string").to_owned(),
+            default_pfp, icon,
         }
     };
 }
@@ -102,9 +92,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     //start_voice_server(Arc::clone(&state));
     
-    let addr = "0.0.0.0:2345".to_string();
+    let addr = format!("{}:{}", &CONF.addr, CONF.port);
     
     let listener = TcpListener::bind(&addr).await?;
+    println!("Listening on {}", &addr);
 
     let der = include_bytes!("../identity.pfx");
     let cert = native_tls::Identity::from_pkcs12(der, "").unwrap();
@@ -116,6 +107,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     loop {
         let (stream, addr) = listener.accept().await?;
+        println!("Got connection from {}", &addr);
         let tls_acceptor = tls_acceptor.clone();
 
         let state = Arc::clone(&state);
@@ -140,8 +132,9 @@ fn start_voice_server(state: Arc<Mutex<Shared>>) {
 }
 
 async fn listen_for_voice<'a>(state: &Arc<Mutex<Shared>>) -> Result<(), Box<dyn Error>> {
-    println!("Starting voice server on 0.0.0.0:5432");
-    let addr = "0.0.0.0:5432";
+    let addr = format!("{}:{}", &CONF.addr, CONF.voice_port);
+    println!("Starting voice server on {}", addr);
+
     let listener = TcpListener::bind(&addr).await?;
     let (stream, addr) = listener.accept().await?;
     println!("Got voice server connection at {}", addr);
@@ -150,7 +143,7 @@ async fn listen_for_voice<'a>(state: &Arc<Mutex<Shared>>) -> Result<(), Box<dyn 
     let mut joined: Vec<i64> = Vec::new();
     
     while let Some(Ok(result)) = lines.next().await {
-        let parsed = json::parse(&result);
+        let parsed = serde_json::from_str(&result);
         match parsed {
             Ok(parsed) => {
                 //let mut peer = state
@@ -160,7 +153,7 @@ async fn listen_for_voice<'a>(state: &Arc<Mutex<Shared>>) -> Result<(), Box<dyn 
                         let state = state.lock().await;
                         for peer in &state.peers {
                             if joined.contains(&peer.uuid) {
-                                peer.tx.send(MessageType::Internal(InternalMessage{ content: json::object!{command: "someone joined voice", uuid: parsed["uuid"].as_i64().unwrap() } } ));
+                                peer.tx.send(MessageType::Internal(json!({"command": "someone joined voice", "uuid": parsed["uuid"].as_i64().unwrap() })));
                             }
                         }
                     }
@@ -178,7 +171,7 @@ async fn listen_for_voice<'a>(state: &Arc<Mutex<Shared>>) -> Result<(), Box<dyn 
                         let state = state.lock().await;
                         for peer in &state.peers {
                             if joined.contains(&peer.uuid) {
-                                peer.tx.send(MessageType::Internal(InternalMessage { content: json::object!{command: "someone left voice", uuid: parsed["uuid"].as_i64().unwrap() } } ));
+                                peer.tx.send(MessageType::Internal(json!({"command": "someone left voice", "uuid": parsed["uuid"].as_i64().unwrap() })));
                             }
                         }
                     }
@@ -193,7 +186,7 @@ async fn listen_for_voice<'a>(state: &Arc<Mutex<Shared>>) -> Result<(), Box<dyn 
     Ok(())
 }
 
-async fn process_internal_command(msg: &InternalMessage, state: Arc<Mutex<Shared>>, peer: &mut Peer) -> Result<(), Box<dyn Error>> {
+async fn process_internal_command(msg: &JsonValue, state: Arc<Mutex<Shared>>, peer: &mut Peer) -> Result<(), Box<dyn Error>> {
     println!("internal command: {:?}", msg);
     Ok(())
 }
@@ -206,43 +199,24 @@ async fn process(state: Arc<Mutex<Shared>>, stream: TlsStream<TcpStream>, addr: 
         state.peers.push(Pontoon::from_peer(&peer));
     }
 
-    peer.lines.send(json::object!{command: "API_version", rel: API_VERSION_RELEASE, maj: API_VERSION_MAJOR, min: API_VERSION_MINOR}.dump()).await?;
+    peer.lines.send(json!({"command": "API_version", "rel": API_VERSION_RELEASE, "maj": API_VERSION_MAJOR, "min": API_VERSION_MINOR}).to_string()).await?;
     //TODO handshake protocol
     
     while let Some(result) = peer.next().await {
         match result {
             Ok(Message::Broadcast(msg)) => {
-                if let MessageType::Cooked(msg) = msg {
-                    if msg.content.len() == 0 {
-                        continue;
-                    }
-                    if msg.content.chars().nth(0).unwrap() == '/' {
-                        commands::process_command(&msg.content, state.clone(), &mut peer).await?;
-                    } else {
-                        if peer.logged_in {
-                            let state_lock = state.lock().await;
-                            state_lock.channels.get(&peer.channel).unwrap().broadcast(
-                                addr, MessageType::Cooked(msg), &state_lock);
-                        }
-                    }
-                } else {
-                    panic!("User recv'd message '{:?}' from the client for some reason. This is a server bug", msg);
-                }
+                commands::process_command(&msg, state.clone(), &mut peer).await?;
             }
 
             Ok(Message::Received(msg)) => {
                 match msg {
                     MessageType::Cooked(msg) => {
-                        let mut msg_json: json::JsonValue = msg.as_json();
+                        let mut msg_json = serde_json::to_string(&msg);
                         msg_json["command"] = "content".into();
-                        peer.lines.send(&msg_json.dump()).await?;
+                        peer.lines.send(&msg_json.to_string()).await?;
                     }
-                    MessageType::Raw(msg) => {
-                        peer.lines.send(&msg.content).await?;
-                    }
-                    MessageType::Internal(msg) => {
-                        process_internal_command(&msg, state.clone(), &mut peer).await?;
-                    }
+                    MessageType::Raw(msg) => peer.lines.send(msg.to_string()).await?,
+                    MessageType::Internal(msg) => process_internal_command(&msg, state.clone(), &mut peer).await?,
                 }
             }
 
@@ -250,11 +224,12 @@ async fn process(state: Arc<Mutex<Shared>>, stream: TlsStream<TcpStream>, addr: 
         }
     }
 
-    if peer.user != i64::MAX {
+    if peer.user != NO_UID {
         let mut state = state.lock().await;
-        let index = state.online.iter().position(|x| *x == peer.user).unwrap();
-        state.online.remove(index);
-        send_online(&state);
+        let if let Some(index) = state.online.iter().position(|x| *x == peer.user) {
+            state.online.remove(index);
+            send_online(&state);
+        }
     }
 
     Ok(())
