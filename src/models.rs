@@ -7,8 +7,9 @@ use crate::schema::sync_servers;
 use crate::schema::emojis;
 use rand::prelude::*;
 use serde::{Deserialize, Serialize};
+use crate::helper::JsonValue;
 
-#[derive(Queryable, Insertable, Clone)]
+#[derive(Queryable, Insertable, Clone, Serialize)]
 #[table_name="channels"]
 pub struct Channel {
     pub uuid: i64,
@@ -17,7 +18,7 @@ pub struct Channel {
 
 //message.rs for message models
 
-#[derive(Queryable, Insertable, Clone)]
+#[derive(Queryable, Insertable, Clone, Serialize, Deserialize)]
 #[table_name="users"]
 pub struct User {
     pub uuid: i64,
@@ -26,7 +27,7 @@ pub struct User {
     pub group_uuid: i64,
 }
 
-#[derive(Queryable, Insertable, Clone)]
+#[derive(Queryable, Insertable, Clone, Serialize, Deserialize)]
 #[table_name="groups"]
 pub struct Group {
     pub uuid: i64,
@@ -51,7 +52,7 @@ pub struct SyncData {
     pub pfp: String,
 }
 
-#[derive(Insertable, Clone)]
+#[derive(Insertable, Clone, Serialize, Deserialize)]
 #[table_name="sync_servers"]
 pub struct SyncServer {
     pub user_uuid: i64,
@@ -120,34 +121,11 @@ impl From<SyncServerQuery> for SyncServer {
 }
 
 impl SyncServer {
-    pub fn as_json(&self) -> json::JsonValue {
-        json::object!{name: self.name.clone().unwrap_or("".into()), uuid: self.server_uuid, ip: self.ip.clone(), port: self.port, pfp: self.pfp.clone().unwrap_or("".into())}
-    }
-
-    pub fn from_json(value: &json::JsonValue, user_uuid: i64, index: i32) -> Self {
-        SyncServer {
-            user_uuid: user_uuid,
-            server_uuid: value["uuid"].as_i64().unwrap(),
-            ip: value["ip"].as_str().unwrap().to_string(),
-            port: value["port"].as_i32().unwrap(),
-            pfp:  Some(value["pfp"].as_str().unwrap().to_string()),
-            name: Some(value["name"].as_str().unwrap().to_string()),
-            idx: index,
-        }
-    }
-}
-
-impl User {
-    pub fn as_json(&self) -> json::JsonValue {
-        json::object!{name: self.name.clone(), uuid: self.uuid, pfp: self.pfp.clone(), group_uuid: self.group_uuid}
-    }
-    pub fn from_json(value: &json::JsonValue) -> Self {
-        User {
-            name: value["name"].as_str().unwrap().to_string(),
-            pfp: value["pfp"].as_str().unwrap().to_string(),
-            uuid: value["uuid"].as_i64().unwrap(),
-            group_uuid: value["group_uuid"].as_i64().unwrap(),
-        }
+    pub fn from_json(value: JsonValue, user_uuid: i64, index: i32) -> Result<Self, serde_json::Error> {
+        let mut s: Self = serde_json::from_value(value)?;
+        s.idx = index;
+        s.user_uuid = user_uuid;
+        Ok(s)
     }
 }
 
@@ -158,23 +136,5 @@ impl Channel {
             uuid: uuid,
             name: name.to_string(),
         };
-    }
-
-    pub fn as_json(&self) -> json::JsonValue {
-        json::object!{name: self.name.clone(), uuid: self.uuid}
-    }
-}
-
-impl Group {
-    fn as_json(&self) -> json::JsonValue {
-        json::object!{name: self.name.clone(), perms: self.permissions, uuid: self.uuid, colour: self.colour}
-    }
-    fn from_json(value: &json::JsonValue) -> Self {
-        Group {
-            uuid: value["uuid"].as_i64().unwrap(),
-            name: value["name"].to_string(),
-            permissions: value["perms"].as_i64().unwrap(),
-            colour: value["colour"].as_i32().unwrap(),
-        }
     }
 }

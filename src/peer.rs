@@ -18,7 +18,6 @@ pub struct Peer {
     pub lines: Framed<TlsStream<TcpStream>, LinesCodec>,
     pub rx: Pin<Box<dyn Stream<Item = MessageType> + Send>>,
     pub tx: mpsc::UnboundedSender<MessageType>,
-    pub vcchannel: i64,
     pub user: i64,
     pub addr: SocketAddr,
     pub logged_in: bool,
@@ -94,7 +93,7 @@ impl Stream for Peer {
         let result: Option<_> = futures::ready!(Pin::new(&mut self.lines).poll_next(cx));
 
         Poll::Ready(match result {
-            Some(Ok(message)) => Some(Ok(Message::Broadcast(message)))),
+            Some(Ok(message)) => Some(Ok(Message::Broadcast(message))),
             Some(Err(e)) => Some(Err(e)),
             None => None,
         })

@@ -1,4 +1,3 @@
-use crate::sharedchannel::SharedChannel;
 use crate::schema;
 use std::collections::HashMap;
 use diesel::prelude::*;
@@ -35,7 +34,7 @@ impl Shared {
 
     pub fn send_to_all(&self, message: MessageType) {
     	for peer in self.peers.iter() {
-            peer.tx.send(&message);
+            peer.tx.send(message.clone());
     	}
     }
 
@@ -76,7 +75,7 @@ impl Shared {
         let new_msg = CookedMessageInsertable::new(msg);
         let _ = diesel::insert_into(schema::messages::table)
             .values(&new_msg)
-            .execute(conn)
+            .execute(&self.conn)
             .expect("Error appending to history");
     }
 

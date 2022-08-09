@@ -9,6 +9,8 @@ use tokio::sync::Mutex;
 use tokio_stream::StreamExt;
 use tokio_native_tls::{TlsStream};
 use tokio_util::codec::{Framed, LinesCodec};
+use serde_json::json;
+use serde::Deserialize;
 
 use futures::SinkExt;
 use std::error::Error;
@@ -19,7 +21,6 @@ use std::io::Read;
 pub mod schema;
 pub mod models;
 pub mod shared;
-pub mod sharedchannel;
 pub mod message;
 pub mod peer;
 pub mod helper;
@@ -31,12 +32,15 @@ use peer::Peer;
 use peer::Pontoon;
 use shared::Shared;
 use crate::commands::send_online;
+use crate::helper::JsonValue;
+use crate::helper::NO_UID;
 
 //release.major.minor
 const API_VERSION_RELEASE: u8 = 0;
 const API_VERSION_MAJOR: u8 = 2;
 const API_VERSION_MINOR: u8 = 0;
 
+#[derive(Deserialize)]
 pub struct Config {
     pub addr: String,
     pub port: u16,
@@ -60,23 +64,21 @@ lazy_static! {
             .expect("Couldn't find config.json!");
         let mut data = String::new();
         file.read_to_string(&mut data).expect("Couldn't read config.json!");
-        let json_value = json::parse(&data).expect("config.json is not valid json!");
+        let res: Result<Config, serde_json::Error> = serde_json::from_str(&data);
+        match res {
+            Ok(mut cfg) => {
+                let default_pfp: String = read_b64(&cfg.default_pfp)
+                        .expect(&format!("Default profile picture file '{}' not found!", cfg.default_pfp));
+                let icon: String = read_b64(&cfg.icon)
+                        .expect(&format!("Icon file '{}' not found!", cfg.icon));
 
-        let default_pfp_path = json_value["default_pfp"].as_str().expect("'default_pfp' value must be string");
-        let icon_path = json_value["icon"].as_str().expect("'icon' value must be string");
-        
-        let default_pfp: String = read_b64(default_pfp_path)
-                .expect(&format!("Default profile picture file '{}' not found!", default_pfp_path));
-        let icon: String = read_b64(icon_path)
-                .expect(&format!("Icon file '{}' not found!", icon_path));
-        
-        Config {
-            addr: json_value["address"].as_str().expect("'address' value must be string").to_owned(),
-            name: json_value["name"].as_str().expect("'name' value must be string").to_owned(),
-            port: json_value["port"].as_u16().expect("'port' value must be 16 bit unsigned integer"),
-            voice_port: json_value["voice_port"].as_u16().expect("'voice_port' value must be 16 bit unsigned integer"),
-            database_file: json_value["database_file"].as_str().expect("'database_file' value must be string").to_owned(),
-            default_pfp, icon,
+                cfg.icon = icon;
+                cfg.default_pfp = default_pfp;
+                cfg
+            }
+            Err(e) => {
+                panic!("Failed to load config: {}", e);
+            }
         }
     };
 }
@@ -143,7 +145,7 @@ async fn listen_for_voice<'a>(state: &Arc<Mutex<Shared>>) -> Result<(), Box<dyn 
     let mut joined: Vec<i64> = Vec::new();
     
     while let Some(Ok(result)) = lines.next().await {
-        let parsed = serde_json::from_str(&result);
+        let parsed: Result<JsonValue, serde_json::Error> = serde_json::from_str(&result);
         match parsed {
             Ok(parsed) => {
                 //let mut peer = state
@@ -211,7 +213,7 @@ async fn process(state: Arc<Mutex<Shared>>, stream: TlsStream<TcpStream>, addr: 
             Ok(Message::Received(msg)) => {
                 match msg {
                     MessageType::Cooked(msg) => {
-                        let mut msg_json = serde_json::to_string(&msg);
+                        let mut msg_json = serde_json::to_value(&msg)?;
                         msg_json["command"] = "content".into();
                         peer.lines.send(&msg_json.to_string()).await?;
                     }
@@ -226,7 +228,7 @@ async fn process(state: Arc<Mutex<Shared>>, stream: TlsStream<TcpStream>, addr: 
 
     if peer.user != NO_UID {
         let mut state = state.lock().await;
-        let if let Some(index) = state.online.iter().position(|x| *x == peer.user) {
+        if let Some(index) = state.online.iter().position(|x| *x == peer.user) {
             state.online.remove(index);
             send_online(&state);
         }

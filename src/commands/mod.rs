@@ -13,7 +13,7 @@ use crate::models::{User, Emoji, SyncData, SyncServer, SyncServerQuery};
 use crate::helper::{gen_uuid, LockedState, JsonValue};
 use crate::shared::Shared;
 use crate::peer::Peer;
-use crate::message::{RawMessage, CookedMessage, MessageType};
+use crate::message::{CookedMessage, MessageType};
 use crate::CONF;
 use crate::helper::NO_UID;
 
@@ -38,7 +38,7 @@ pub enum Status {
 }
 
 pub trait Packet {
-    pub fn execute(&self,
+    fn execute(&self,
                    state_lock: &mut LockedState,
                    peer: &mut Peer
     ) -> JsonValue;
@@ -48,14 +48,14 @@ pub trait Packet {
 pub struct RegisterPacket { pub passwd: String, pub name: String }
 
 fn send_metadata(state_lock: &LockedState, peer: &Peer) {
-    let meta = json!([state_lock.get_user(&peer.user).as_json()]);
+    let meta = json!([serde_json::to_value(state_lock.get_user(&peer.user)).unwrap()]);
     state_lock.send_to_all(MessageType::Raw(json!({"command": "metadata", "data": meta})));
 }
 
 pub fn send_online(state_lock: &LockedState) {
-    let mut res = json!([]);
+    let mut res = Vec::new();
     for user in state_lock.online.iter() {
-        res.push(user + 0).unwrap();
+        res.push(json!(user));
     }
     let final_json = json!({
         "command": "online",
@@ -75,7 +75,7 @@ fn make_hash_b64(passwd: &str) -> String {
 }
 
 impl Packet for RegisterPacket {
-    pub fn execute(&self, state_lock: &mut LockedState, peer: &mut Peer) -> JsonValue {
+    fn execute(&self, state_lock: &mut LockedState, peer: &mut Peer) -> JsonValue {
         if peer.logged_in {
             //registering doesn't make sense when logged in
             return json!({"command": "register", "status": Status::MethodNotAllowed as i32});
@@ -83,7 +83,7 @@ impl Packet for RegisterPacket {
     
         let uuid = gen_uuid();
         let user = User{
-            name: self.name,
+            name: self.name.to_owned(),
             pfp: CONF.default_pfp.to_owned(),
             uuid,
             group_uuid: 0,
@@ -102,10 +102,10 @@ impl Packet for RegisterPacket {
         send_metadata(state_lock, peer);
         send_online(state_lock);
 
-        json!{command: "register", status: Status::Ok as i32, uuid: uuid}
+        json!({"command": "register", "status": Status::Ok as i32, "uuid": uuid})
     }
 }
-
+/*
 pub fn login(state_lock: &mut LockedState, peer: &mut Peer, packet: &json::JsonValue, logged: bool) -> json::JsonValue {
     if logged {
         //logging in doesn't make sense when already logged in
@@ -188,10 +188,10 @@ pub fn content() -> json::JsonValue {
     } else {
         json::object!{command: "content", status: Status::BadRequest as i32}
     }
-}
+}*/
 
 pub async fn process_command(msg: &String, state: Arc<Mutex<Shared>>, peer: &mut Peer) -> Result<(), Box<dyn Error>> {
-    let packet_json = json::parse(msg);
+/*    let packet_json = json::parse(msg);
     
 
     let response = if let Ok(packet) = packet {
@@ -220,7 +220,7 @@ pub async fn process_command(msg: &String, state: Arc<Mutex<Shared>>, peer: &mut
             Some("content")         => content(),
             None                    => json::object!{command: "unknown", code: Status::BadRequest as i32},
             _                       => json::object!{command: packet["command"].as_str().unwrap(), code: Status::BadRequest as i32},
-        }
+        }*/
 /*
         //commands that can be run only if the user is logged in
         match argv[0] {
@@ -351,9 +351,9 @@ pub async fn process_command(msg: &String, state: Arc<Mutex<Shared>>, peer: &mut
             }
             _ => ()
         }*/
-    } else {
+    /*} else {
         json::object!{command: "unknown", status: Status::BadRequest as i32}
-    };
+    };*/
     Ok(())
 }
 
