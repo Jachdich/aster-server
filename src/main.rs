@@ -1,3 +1,5 @@
+#![allow(warnings)]
+
 extern crate tokio;
 #[macro_use]
 extern crate lazy_static;
@@ -35,7 +37,6 @@ use crate::commands::send_online;
 use crate::helper::JsonValue;
 use crate::helper::NO_UID;
 
-//release.major.minor
 const API_VERSION_RELEASE: u8 = 0;
 const API_VERSION_MAJOR: u8 = 2;
 const API_VERSION_MINOR: u8 = 0;
@@ -119,6 +120,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             if let Err(e) = process(state, tls_stream, addr).await {
                 println!("An error occurred: {:?}", e);
             }
+            println!("Lost connection from {}", &addr);
         });
     }
 }

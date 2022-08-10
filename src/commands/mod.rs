@@ -1,3 +1,4 @@
+
 mod auth;
 mod log_any;
 mod log_in;
@@ -26,6 +27,7 @@ use std::io::Read;
 use sodiumoxide::crypto::pwhash::argon2id13;
 use serde_json::json;
 use serde::{Deserialize, Serialize};
+use enum_dispatch::enum_dispatch;
 
 pub enum Status {
     Ok = 200,
@@ -37,15 +39,35 @@ pub enum Status {
     MethodNotAllowed = 405,
 }
 
+#[derive(Deserialize)]
+pub struct RegisterPacket { pub passwd: String, pub name: String }
+
+#[derive(Deserialize)]
+pub struct LoginPacket {
+    pub passwd: String,
+    pub uname: Option<String>,
+    pub uuid: Option<i64>,
+}
+
+#[derive(Deserialize)]
+pub struct PingPacket;
+
+#[enum_dispatch]
+#[derive(Deserialize)]
+#[serde(tag = "command")]
+enum Packets {
+    #[serde(rename = "register")] RegisterPacket,
+    #[serde(rename = "login")]    LoginPacket,
+    #[serde(rename = "ping")]     PingPacket,
+}
+
+#[enum_dispatch(Packets)]
 pub trait Packet {
     fn execute(&self,
                    state_lock: &mut LockedState,
                    peer: &mut Peer
     ) -> JsonValue;
 }
-
-#[derive(Serialize, Deserialize)]
-pub struct RegisterPacket { pub passwd: String, pub name: String }
 
 fn send_metadata(state_lock: &LockedState, peer: &Peer) {
     let meta = json!([serde_json::to_value(state_lock.get_user(&peer.user)).unwrap()]);
@@ -105,24 +127,24 @@ impl Packet for RegisterPacket {
         json!({"command": "register", "status": Status::Ok as i32, "uuid": uuid})
     }
 }
-/*
-pub fn login(state_lock: &mut LockedState, peer: &mut Peer, packet: &json::JsonValue, logged: bool) -> json::JsonValue {
-    if logged {
-        //logging in doesn't make sense when already logged in
-        return json::object!{command: "login", status: Status::MethodNotAllowed as i32};
-    }
+
+impl Packet for LoginPacket {
+    fn execute(&self, state_lock: &mut LockedState, peer: &mut Peer) -> JsonValue {
+        if peer.logged_in {
+            //logging in doesn't make sense when already logged in
+            return json!({"command": "login", "status": Status::MethodNotAllowed as i32});
+        }
     
-    if let Some(password) = packet["password"].as_str() {
-        let uuid = if let Some(uname) = packet["uname"].as_str() {
+        let uuid = if let Some(uname) = &self.uname {
             if let Some(user) = state_lock.get_user_by_name(uname) { user.uuid }
             else {
-                return json::object!{command: "login", status: Status::NotFound as i32};
+                return json!({"command": "login", "status": Status::NotFound as i32});
             }
-        } else if let Some(uuid) = packet["uuid"].as_i64() {
+        } else if let Some(uuid) = self.uuid {
             uuid
         } else {
             //neither uname nor uuid were provided
-            return json::object!{command: "login", status: Status::BadRequest as i32};
+            return json!({"command": "login", "status": Status::BadRequest as i32});
         };
 
         //TODO confirm password
@@ -135,13 +157,18 @@ pub fn login(state_lock: &mut LockedState, peer: &mut Peer, packet: &json::JsonV
         }
         send_metadata(&state_lock, peer);
         send_online(&state_lock);
-        json::object!{command: "login", status: Status::Ok as i32, uuid: uuid}
+        json!({"command": "login", "status": Status::Ok as i32, "uuid": uuid})
         
-    } else {
-        //require password
-        json::object!{command: "login", status: Status::BadRequest as i32}
     }
 }
+
+impl Packet for PingPacket {
+    fn execute(&self, state_lock: &mut LockedState, peer: &mut Peer) -> JsonValue {
+        json!({"command": "ping", "status": Status::Ok as i32})
+    }
+}
+
+/*
 
 pub fn nick(state_lock: &LockedState, peer: &mut Peer, packet: &json::JsonValue, logged: bool) -> json::JsonValue {
     if !logged {
@@ -191,6 +218,10 @@ pub fn content() -> json::JsonValue {
 }*/
 
 pub async fn process_command(msg: &String, state: Arc<Mutex<Shared>>, peer: &mut Peer) -> Result<(), Box<dyn Error>> {
+    let val: Packets = serde_json::from_str(msg).unwrap();
+    let mut state_lock = state.lock().await;
+    let response = val.execute(&mut state_lock, peer);
+    peer.lines.send(response.to_string() + "\n").await?;
 /*    let packet_json = json::parse(msg);
     
 
