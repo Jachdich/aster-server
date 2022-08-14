@@ -52,6 +52,9 @@ pub struct LoginPacket {
 #[derive(Deserialize)]
 pub struct PingPacket;
 
+#[derive(Deserialize)]
+pub struct NickPacket { pub nick: String }
+
 #[enum_dispatch]
 #[derive(Deserialize)]
 #[serde(tag = "command")]
@@ -59,6 +62,7 @@ enum Packets {
     #[serde(rename = "register")] RegisterPacket,
     #[serde(rename = "login")]    LoginPacket,
     #[serde(rename = "ping")]     PingPacket,
+    #[serde(rename = "nick")]     NickPacket,
 }
 
 #[enum_dispatch(Packets)]
@@ -168,23 +172,23 @@ impl Packet for PingPacket {
     }
 }
 
-/*
+impl Packet for NickPacket {
+    fn nick(&self, state_lock: &mut LockedState, peer: &mut Peer) -> JsonValue {
+        if !peer.logged_in {
+            return json!({"command": "nick", "status": Status::Forbidden as i32});
+        }
 
-pub fn nick(state_lock: &LockedState, peer: &mut Peer, packet: &json::JsonValue, logged: bool) -> json::JsonValue {
-    if !logged {
-        return json::object!{command: "nick", status: Status::Forbidden as i32};
-    }
-
-    if let Some(name) = packet["nick"].as_str() {
         let mut user = state_lock.get_user(&peer.user);
-        user.name = name.to_string();
+        user.name = self.nick.to_string();
         state_lock.update_user(user);
         send_metadata(&state_lock, peer);
-        json::object!{command: "nick", status: Status::Ok as i32}
-    } else {
-        json::object!{command: "nick", status: Status::BadRequest as i32}
+        json!({"command": "nick", "status": Status::Ok as i32})
     }
 }
+
+/*
+
+
 
 pub fn online(state_lock: &LockedState, logged: bool) -> json::JsonValue {
     if !logged {
