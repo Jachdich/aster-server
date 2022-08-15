@@ -173,7 +173,7 @@ impl Packet for PingPacket {
 }
 
 impl Packet for NickPacket {
-    fn nick(&self, state_lock: &mut LockedState, peer: &mut Peer) -> JsonValue {
+    fn execute(&self, state_lock: &mut LockedState, peer: &mut Peer) -> JsonValue {
         if !peer.logged_in {
             return json!({"command": "nick", "status": Status::Forbidden as i32});
         }
