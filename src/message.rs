@@ -1,6 +1,5 @@
 use crate::schema::messages;
 use crate::helper::JsonValue;
-use serde_json::json;
 use serde::{Deserialize, Serialize};
 
 #[derive(Queryable, Clone, Debug, Serialize, Deserialize)]

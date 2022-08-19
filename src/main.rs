@@ -1,4 +1,4 @@
-#![allow(warnings)]
+#![deny(warnings)]
 
 extern crate tokio;
 #[macro_use]
@@ -92,9 +92,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
         let mut state = state.lock().await;
         state.load();
     }
-
-    //start_voice_server(Arc::clone(&state));
-    
+    if false {
+        start_voice_server(Arc::clone(&state));
+    }
     let addr = format!("{}:{}", &CONF.addr, CONF.port);
     
     let listener = TcpListener::bind(&addr).await?;
@@ -157,7 +157,7 @@ async fn listen_for_voice<'a>(state: &Arc<Mutex<Shared>>) -> Result<(), Box<dyn 
                         let state = state.lock().await;
                         for peer in &state.peers {
                             if joined.contains(&peer.uuid) {
-                                peer.tx.send(MessageType::Internal(json!({"command": "someone joined voice", "uuid": parsed["uuid"].as_i64().unwrap() })));
+                                peer.tx.send(MessageType::Internal(json!({"command": "someone joined voice", "uuid": parsed["uuid"].as_i64().unwrap() })))?;
                             }
                         }
                     }
@@ -175,7 +175,7 @@ async fn listen_for_voice<'a>(state: &Arc<Mutex<Shared>>) -> Result<(), Box<dyn 
                         let state = state.lock().await;
                         for peer in &state.peers {
                             if joined.contains(&peer.uuid) {
-                                peer.tx.send(MessageType::Internal(json!({"command": "someone left voice", "uuid": parsed["uuid"].as_i64().unwrap() })));
+                                peer.tx.send(MessageType::Internal(json!({"command": "someone left voice", "uuid": parsed["uuid"].as_i64().unwrap() })))?;
                             }
                         }
                     }
@@ -190,14 +190,14 @@ async fn listen_for_voice<'a>(state: &Arc<Mutex<Shared>>) -> Result<(), Box<dyn 
     Ok(())
 }
 
-async fn process_internal_command(msg: &JsonValue, state: Arc<Mutex<Shared>>, peer: &mut Peer) -> Result<(), Box<dyn Error>> {
+async fn process_internal_command(msg: &JsonValue, _state: Arc<Mutex<Shared>>, _peer: &mut Peer) -> Result<(), Box<dyn Error>> {
     println!("internal command: {:?}", msg);
     Ok(())
 }
 
 async fn process(state: Arc<Mutex<Shared>>, stream: TlsStream<TcpStream>, addr: SocketAddr) -> Result<(), Box<dyn Error>> {
     let lines = Framed::new(stream, LinesCodec::new());
-    let mut peer = Peer::new(state.clone(), lines, addr).await?;
+    let mut peer = Peer::new(lines, addr).await?;
     {
         let mut state = state.lock().await;
         state.peers.push(Pontoon::from_peer(&peer));

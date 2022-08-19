@@ -1,5 +1,6 @@
 # Aster protocol
 All packets are in JSON format, and have at least a single `command` field. Clientbound packets often have a `status` field, utilising HTTP status codes to indicate success or failure.
+
 ```json
 {
     "command": "command_name",
@@ -21,59 +22,88 @@ Unless specified by the individual packet, the `status` field of a packet behave
 
 ## Serverbound
 
-### Nick
-Change the username of the currently logged in user. Must be logged in.
+### `register`
+Register a new user with given username and password. Must be logged out. On successful user creation, the user will automatically be logged in. See clientbound [`register`](#register-1) packet.
 
-Command name: `nick`
+Fields:
+- `name`: [str] Initial username to assign to new user
+- `passwd`: [str] Initial password to assign to new user
+
+---
+
+### `login`
+Log in user, either using username or uuid to identify the user. Either the `ima,e` field or the `uuid` field must be present, not both (or neither). See clientbound [`login`](#login-1) packet.
+
+Fields:
+- `passwd`: [str] User's password
+- `uname`: [str] (optional) Username to log into. Must be present if `uuid` is not.
+- `uuid`: [int] (optional) UUID to log into. Must be present if `uname` is not.
+
+---
+
+### `nick`
+Change the username of the currently logged in user. Must be logged in.
 
 Fields:
 - `nick`: [str] the new nickname to be applied
 
 ---
 
-### Register
-Register a new user with given username and password. Must be logged out. On successful user creation, the user will automatically be logged in.
+### `online`
+Return a list of online UUIDs. See clientbound [`online`](#online-1) packet.
 
-Command name: `register`
-
-Fields:
-- `username`: Initial username to assign to new user
-- `password`: Initial password to assign to new user
+Fields: None
 
 ---
 
-### Ping
+### `ping`
 Essentially do nothing, and send a `200` status code response.
 
 Fields: None
 
 ---
 
-### Online
+## Clientbound
 
+### `register`
+Response to serverbound [`register`](#register) command.
+
+Fields:
+- `status`: `405` if user is already logged in
+- `uuid`: [int] The UUID of the newly created user
 
 ---
 
-## Clientbound
+### `register`
+Response to serverbound [`login`](#login) command.
 
-### Nick
-Response to serverbound `nick` command.
+Fields:
+- `status`: `405` if user is already logged in
+- `uuid`: [int] The UUID of the logged in user
+
+---
+
+### `nick`
+Response to serverbound [`nick`](#nick) command.
 
 Fields:
 - `status`: `403` if user is not logged in
 
 ---
 
-### Register
-Response to serverbound `register` command.
+### `online`
+Return a list of online UUIDs. May be sent as a response to serverbound [`online`](#online) packet, or in response to a user joining or leaving.
 
 Fields:
-- `status`: `405` if user is logged in
+- `data`: List[int] List of UUIDs
+- `status`: `403` if user is not logged in
 
 ---
 
-### Ping
-Response to serverbound `ping` command.
+### `ping`
+Response to serverbound [`ping`](#ping) command.
 
 Fields:
 - `status`: always `200`
+
+---

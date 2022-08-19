@@ -4,29 +4,24 @@ mod log_any;
 mod log_in;
 mod log_out;
 
-use auth::*;
+//use auth::*;
 use log_any::*;
-use log_in::*;
-use log_out::*;
+//use log_in::*;
+//use log_out::*;
 
-use crate::schema;
-use crate::models::{User, Emoji, SyncData, SyncServer, SyncServerQuery};
+use crate::models::User;
 use crate::helper::{gen_uuid, LockedState, JsonValue};
 use crate::shared::Shared;
 use crate::peer::Peer;
 use crate::message::{CookedMessage, MessageType};
 use crate::CONF;
-use crate::helper::NO_UID;
 
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use std::error::Error;
-use diesel::prelude::*;
 use futures::SinkExt;
-use std::io::Read;
-use sodiumoxide::crypto::pwhash::argon2id13;
 use serde_json::json;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use enum_dispatch::enum_dispatch;
 
 pub enum Status {
@@ -40,7 +35,10 @@ pub enum Status {
 }
 
 #[derive(Deserialize)]
-pub struct RegisterPacket { pub passwd: String, pub name: String }
+pub struct RegisterPacket {
+    pub passwd: String,
+    pub name: String,
+}
 
 #[derive(Deserialize)]
 pub struct LoginPacket {
@@ -50,19 +48,32 @@ pub struct LoginPacket {
 }
 
 #[derive(Deserialize)]
-pub struct PingPacket;
+pub struct ContentPacket {
+    pub content: String,
+    pub channel: i64,
+}
 
-#[derive(Deserialize)]
-pub struct NickPacket { pub nick: String }
+#[derive(Deserialize)] pub struct PingPacket;
+#[derive(Deserialize)] pub struct NickPacket { pub nick: String }
+#[derive(Deserialize)] pub struct OnlinePacket;
+
 
 #[enum_dispatch]
 #[derive(Deserialize)]
 #[serde(tag = "command")]
 enum Packets {
-    #[serde(rename = "register")] RegisterPacket,
-    #[serde(rename = "login")]    LoginPacket,
-    #[serde(rename = "ping")]     PingPacket,
-    #[serde(rename = "nick")]     NickPacket,
+    #[serde(rename = "register")]      RegisterPacket,
+    #[serde(rename = "login")]         LoginPacket,
+    #[serde(rename = "ping")]          PingPacket,
+    #[serde(rename = "nick")]          NickPacket,
+    #[serde(rename = "online")]        OnlinePacket,
+    #[serde(rename = "content")]       ContentPacket,
+    #[serde(rename = "get_metadata")]  GetMetadataPacket,
+    #[serde(rename = "get_name")]      GetNamePacket,
+    #[serde(rename = "get_icon")]      GetIconPacket,
+    #[serde(rename = "list_emoji")]    ListEmojiPacket,
+    #[serde(rename = "get_emoji")]     GetEmojiPacket,
+    #[serde(rename = "list_channels")] ListChannelsPacket,
 }
 
 #[enum_dispatch(Packets)]
@@ -90,16 +101,6 @@ pub fn send_online(state_lock: &LockedState) {
     state_lock.send_to_all(MessageType::Raw(final_json));
 }
 
-fn make_hash_b64(passwd: &str) -> String {
-    sodiumoxide::init().expect("Fatal(hash) sodiumoxide couldn't be initialised");
-    let hash = argon2id13::pwhash(
-        passwd.as_bytes(),
-        argon2id13::OPSLIMIT_INTERACTIVE,
-        argon2id13::MEMLIMIT_INTERACTIVE
-    ).expect("Fatal(hash) argon2id13::pwhash failed");
-    base64::encode(&hash.0)
-}
-
 impl Packet for RegisterPacket {
     fn execute(&self, state_lock: &mut LockedState, peer: &mut Peer) -> JsonValue {
         if peer.logged_in {
@@ -115,7 +116,10 @@ impl Packet for RegisterPacket {
             group_uuid: 0,
         };
 
-        state_lock.insert_user(user);
+        match state_lock.insert_user(user) {
+            Err(_) => return json!({"command": "register", "status": Status::InternalError as i32}),
+            _ => (),
+        }
         peer.logged_in = true;
         peer.user = uuid;
 
@@ -167,7 +171,7 @@ impl Packet for LoginPacket {
 }
 
 impl Packet for PingPacket {
-    fn execute(&self, state_lock: &mut LockedState, peer: &mut Peer) -> JsonValue {
+    fn execute(&self, _: &mut LockedState, _: &mut Peer) -> JsonValue {
         json!({"command": "ping", "status": Status::Ok as i32})
     }
 }
@@ -180,82 +184,62 @@ impl Packet for NickPacket {
 
         let mut user = state_lock.get_user(&peer.user);
         user.name = self.nick.to_string();
-        state_lock.update_user(user);
+
+        match state_lock.update_user(user) {
+            Err(_) => return json!({"command": "nick", "status": Status::InternalError as i32}),
+            _ => (),
+        }
+
         send_metadata(&state_lock, peer);
         json!({"command": "nick", "status": Status::Ok as i32})
     }
 }
 
-/*
 
+impl Packet for OnlinePacket {
+    fn execute(&self, state_lock: &mut LockedState, peer: &mut Peer) -> JsonValue {
+        if !peer.logged_in {
+            return json!({"command": "online", "status": Status::Forbidden as i32});
+        }
 
-
-pub fn online(state_lock: &LockedState, logged: bool) -> json::JsonValue {
-    if !logged {
-        return json::object!{command: "online", status: Status::Forbidden as i32};
-    }
-
-    json::object!{
-        command: "online",
-        data: state_lock.online.clone(),
-        status: Status::Ok as i32,
+        json!({
+            "command": "online",
+            "data": state_lock.online.clone(),
+            "status": Status::Ok as i32,
+        })
     }
 }
 
-pub fn content() -> json::JsonValue {
-    if !logged {
-        return json::object!{command: "content", status: Status::Forbidden as i32}
-    }
-    if let Some(packet["content"].is_str() && packet["channel_uuid"].is_number() {
+impl Packet for ContentPacket {
+    fn execute(&self, state_lock: &mut LockedState, peer: &mut Peer) -> JsonValue {
+        if !peer.logged_in {
+            return json!({"command": "content", "status": Status::Forbidden as i32});
+        }
         let msg = CookedMessage {
             uuid: gen_uuid(),
-            content: packet["content"].as_str().unwrap().to_owned(),
+            content: self.content.to_owned(),
             author_uuid: peer.user,
-            channel_uuid,
+            channel_uuid: self.channel,
             date: chrono::offset::Utc::now().timestamp() as i32,
+            rowid: 0,
         };
         state_lock.send_to_all(MessageType::Cooked(msg));
-        json::object!{command: "content", status: Status::Ok as i32}
-    } else {
-        json::object!{command: "content", status: Status::BadRequest as i32}
+        json!({"command": "content", "status": Status::Ok as i32})
     }
-}*/
+}
 
 pub async fn process_command(msg: &String, state: Arc<Mutex<Shared>>, peer: &mut Peer) -> Result<(), Box<dyn Error>> {
-    let val: Packets = serde_json::from_str(msg).unwrap();
-    let mut state_lock = state.lock().await;
-    let response = val.execute(&mut state_lock, peer);
+    let response = match serde_json::from_str::<Packets>(msg) {
+        Ok(packets) => {
+            let mut state_lock = state.lock().await;
+            packets.execute(&mut state_lock, peer)
+        },
+        Err(_) => {
+            json!({"command": "unknown", "status": Status::BadRequest as i32})
+        }
+    };
+
     peer.lines.send(response.to_string() + "\n").await?;
-/*    let packet_json = json::parse(msg);
-    
-
-    let response = if let Ok(packet) = packet {
-
-        let mut state_lock = state.lock().await;
-        let logged = peer.logged_in;
-        
-        
-        match packet["command"].as_str() {
-            //log any
-            Some("get_all_metadata") => get_all_metadata(&state_lock),
-            Some("get_icon")         => get_icon(&state_lock),
-            Some("get_name")         => get_name(&state_lock),
-            Some("get_channels")     => get_channels(&state_lock),
-            Some("ping")             => json::object!{command: "pong"}, //TODO should these be functions?
-            Some("leave")            => json::object!{command: "Goodbye"}, //TODO actually leave?
-            Some("get_emoji")        => get_emoji(&state_lock, &packet),
-            Some("list_emoji")       => list_emoji(&state_lock),
-
-            //log out
-            Some("register")        => register(&mut state_lock, peer, &packet, logged),
-            Some("login")           => login(&mut state_lock, peer, &packet, logged),
-            //log in
-            Some("nick")            => nick(state_lock, peer, logged),
-            Some("online")          => online(state_lock, logged),
-            Some("content")         => content(),
-            None                    => json::object!{command: "unknown", code: Status::BadRequest as i32},
-            _                       => json::object!{command: packet["command"].as_str().unwrap(), code: Status::BadRequest as i32},
-        }*/
 /*
         //commands that can be run only if the user is logged in
         match argv[0] {

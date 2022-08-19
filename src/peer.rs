@@ -1,16 +1,11 @@
 use std::task::{Context, Poll};
 use tokio::sync::mpsc;
-use tokio::sync::Mutex;
-use crate::helper::gen_uuid;
 use std::pin::Pin;
 use tokio_util::codec::{Framed, LinesCodec, LinesCodecError};
 use tokio_stream::Stream;
 use tokio_native_tls::TlsStream;
 use tokio::net::TcpStream;
 use std::net::SocketAddr;
-use std::sync::Arc;
-use chrono;
-use crate::shared::Shared;
 use crate::message::*;
 use crate::helper::NO_UID;
 
@@ -42,7 +37,7 @@ impl Pontoon {
 }
 
 impl Peer {
-    pub async fn new(state: Arc<Mutex<Shared>>, lines: Framed<TlsStream<TcpStream>, LinesCodec>, addr: SocketAddr) -> std::io::Result<Peer> {
+    pub async fn new(lines: Framed<TlsStream<TcpStream>, LinesCodec>, addr: SocketAddr) -> std::io::Result<Peer> {
         let (tx, mut rx) = mpsc::unbounded_channel::<MessageType>();
 
         let rx = Box::pin(async_stream::stream! {
@@ -57,27 +52,6 @@ impl Peer {
             logged_in: false
         })
     }
-
-    // pub fn channel(&mut self, new_channel: i64, state: &mut tokio::sync::MutexGuard<'_, Shared>) {
-        // //TODO assuming self.channel and new_channel are both valid. Fix plz
-        // if self.channel != NO_UID {
-            // state.channels.get_mut(&self.channel).unwrap().peers.remove(&self.addr);
-        // }
-        // if new_channel != NO_UID {
-            // state.channels.get_mut(&new_channel).unwrap().peers.insert(self.addr, self.tx.clone());
-        // }
-        // self.channel = new_channel.to_owned();
-    // }
-
-    // pub fn vcchannel(&mut self, chan: i64, state: &mut tokio::sync::MutexGuard<'_, Shared>) {
-        // if self.vcchannel != NO_UID {
-            // state.channels.get_mut(&self.channel).unwrap().peers.remove(&self.addr);
-        // }
-        // if chan != NO_UID {
-            // state.channels.get_mut(&chan).unwrap().peers.insert(self.addr, self.tx.clone());
-        // }
-        // self.vcchannel = chan.to_owned();
-    // }
 }
 
 

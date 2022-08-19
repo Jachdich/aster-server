@@ -1,9 +1,7 @@
 use crate::schema;
-use std::collections::HashMap;
 use diesel::prelude::*;
 use crate::models::*;
 use crate::message::*;
-use std::net::{SocketAddr, IpAddr, Ipv4Addr};
 use crate::peer::Pontoon;
 use crate::CONF;
 
@@ -28,13 +26,13 @@ impl Shared {
         let channels = self.get_channels();
         if channels.len() == 0 {
             let new_channel = Channel::new("general");
-            self.insert_channel(new_channel);
+            self.insert_channel(new_channel).expect("Fatal(Shared::load): couldn't insert channel, broken database?");
         }
     }
 
     pub fn send_to_all(&self, message: MessageType) {
     	for peer in self.peers.iter() {
-            peer.tx.send(message.clone());
+            peer.tx.send(message.clone()).expect("Fatal(Shared::send_to_all): I think this is unlikely but `peer.tx.send` failed. idk bug me to fix it ig");
     	}
     }
 
