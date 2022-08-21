@@ -7,15 +7,15 @@ mod log_out;
 //use auth::*;
 use log_any::*;
 //use log_in::*;
-//use log_out::*;
+use log_out::*;
 
-use crate::models::User;
 use crate::helper::{gen_uuid, LockedState, JsonValue};
 use crate::shared::Shared;
 use crate::peer::Peer;
 use crate::message::{CookedMessage, MessageType};
-use crate::CONF;
+use crate::schema;
 
+use diesel::prelude::*;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use std::error::Error;
@@ -35,27 +35,20 @@ pub enum Status {
 }
 
 #[derive(Deserialize)]
-pub struct RegisterPacket {
-    pub passwd: String,
-    pub name: String,
-}
-
-#[derive(Deserialize)]
-pub struct LoginPacket {
-    pub passwd: String,
-    pub uname: Option<String>,
-    pub uuid: Option<i64>,
-}
-
-#[derive(Deserialize)]
 pub struct ContentPacket {
     pub content: String,
+    pub channel: i64,
+}
+#[derive(Deserialize)]
+pub struct HistoryPacket {
+    pub num: u32,
     pub channel: i64,
 }
 
 #[derive(Deserialize)] pub struct PingPacket;
 #[derive(Deserialize)] pub struct NickPacket { pub nick: String }
 #[derive(Deserialize)] pub struct OnlinePacket;
+#[derive(Deserialize)] pub struct PfpPacket { pub data: String }
 
 
 #[enum_dispatch]
@@ -74,6 +67,8 @@ enum Packets {
     #[serde(rename = "list_emoji")]    ListEmojiPacket,
     #[serde(rename = "get_emoji")]     GetEmojiPacket,
     #[serde(rename = "list_channels")] ListChannelsPacket,
+    #[serde(rename = "history")]       HistoryPacket,
+    #[serde(rename = "pfp")]           PfpPacket,
 }
 
 #[enum_dispatch(Packets)]
@@ -99,75 +94,6 @@ pub fn send_online(state_lock: &LockedState) {
         "data": res,
     });
     state_lock.send_to_all(MessageType::Raw(final_json));
-}
-
-impl Packet for RegisterPacket {
-    fn execute(&self, state_lock: &mut LockedState, peer: &mut Peer) -> JsonValue {
-        if peer.logged_in {
-            //registering doesn't make sense when logged in
-            return json!({"command": "register", "status": Status::MethodNotAllowed as i32});
-        }
-    
-        let uuid = gen_uuid();
-        let user = User{
-            name: self.name.to_owned(),
-            pfp: CONF.default_pfp.to_owned(),
-            uuid,
-            group_uuid: 0,
-        };
-
-        match state_lock.insert_user(user) {
-            Err(_) => return json!({"command": "register", "status": Status::InternalError as i32}),
-            _ => (),
-        }
-        peer.logged_in = true;
-        peer.user = uuid;
-
-        if state_lock.online.iter().any(|x| *x == peer.user) {
-            println!("Error(register): user already online?");
-        } else {
-            state_lock.online.push(peer.user);
-        }
-
-        send_metadata(state_lock, peer);
-        send_online(state_lock);
-
-        json!({"command": "register", "status": Status::Ok as i32, "uuid": uuid})
-    }
-}
-
-impl Packet for LoginPacket {
-    fn execute(&self, state_lock: &mut LockedState, peer: &mut Peer) -> JsonValue {
-        if peer.logged_in {
-            //logging in doesn't make sense when already logged in
-            return json!({"command": "login", "status": Status::MethodNotAllowed as i32});
-        }
-    
-        let uuid = if let Some(uname) = &self.uname {
-            if let Some(user) = state_lock.get_user_by_name(uname) { user.uuid }
-            else {
-                return json!({"command": "login", "status": Status::NotFound as i32});
-            }
-        } else if let Some(uuid) = self.uuid {
-            uuid
-        } else {
-            //neither uname nor uuid were provided
-            return json!({"command": "login", "status": Status::BadRequest as i32});
-        };
-
-        //TODO confirm password
-        peer.user = uuid;
-        peer.logged_in = true;
-        if state_lock.online.iter().any(|x| *x == peer.user) {
-            println!("Error(login): user already online?");
-        } else {
-            state_lock.online.push(peer.user);
-        }
-        send_metadata(&state_lock, peer);
-        send_online(&state_lock);
-        json!({"command": "login", "status": Status::Ok as i32, "uuid": uuid})
-        
-    }
 }
 
 impl Packet for PingPacket {
@@ -228,6 +154,49 @@ impl Packet for ContentPacket {
     }
 }
 
+impl Packet for HistoryPacket {
+    fn execute(&self, state_lock: &mut LockedState, peer: &mut Peer) -> JsonValue {
+        if !peer.logged_in {
+            return json!({"command": "history", "status": Status::Forbidden as i32});
+        }
+        match schema::messages::table
+            .filter(schema::messages::channel_uuid.eq(self.channel))
+            .order(schema::messages::rowid.desc())
+            .limit(self.num.into())
+            .load::<CookedMessage>(&state_lock.conn) {
+            Ok(mut history) => {
+                history.reverse();
+                json!({"command": "history", "data": history, "status": Status::Ok as i32})
+            }
+            Err(e) => {
+                println!("Warn(HistoryPacket::execute) error loading database: {:?}", e);
+                json!({"command": "history", "status": Status::InternalError as i32})
+            }
+        }
+    }
+}
+
+impl Packet for PfpPacket {
+    fn execute(&self, state_lock: &mut LockedState, peer: &mut Peer) -> JsonValue {
+        if !peer.logged_in {
+            return json!({"command": "pfp", "status": Status::Forbidden as i32});
+        }
+        let mut user = state_lock.get_user(&peer.user);
+        user.pfp = self.data.to_owned();
+        match state_lock.update_user(user) {
+            Ok(_) => {
+                send_metadata(&state_lock, peer);
+                json!({"command": "pfp", "status": Status::Ok as i32})
+            },
+            Err(e) => {
+                println!("Warn(PfpPacket::execute) error updating user: {:?}", e);
+                json!({"command": "pfp", "status": Status::InternalError as i32})
+            }
+        }
+    }
+}
+
+
 pub async fn process_command(msg: &String, state: Arc<Mutex<Shared>>, peer: &mut Peer) -> Result<(), Box<dyn Error>> {
     let response = match serde_json::from_str::<Packets>(msg) {
         Ok(packets) => {
@@ -243,35 +212,8 @@ pub async fn process_command(msg: &String, state: Arc<Mutex<Shared>>, peer: &mut
 /*
         //commands that can be run only if the user is logged in
         match argv[0] {
-            "/history" => {
-                let a = argv[1].parse::<i64>().unwrap();
-                //let mut b = argv[2].parse::<usize>().unwrap();
-                //if a > history.len() { a = history.len(); }
-                //if b > history.len() { b = history.len(); }
-                let mut history = schema::messages::table.filter(schema::messages::channel_uuid.eq(peer.channel)).order(schema::messages::rowid.desc()).limit(a).load::<CookedMessage>(&state_lock.conn).unwrap();
-                history.reverse();
-                let mut res = json::JsonValue::new_array();
-
-                for msg in history.iter() {
-                    //peer.lines.send(msg).await;
-                    res.push(msg.as_json()).unwrap();
-                }
-                let json_obj = json::object!{command: "history", data: res};
-                peer.lines.send(&json_obj.dump()).await?;
-            }
-
-            "/pfp" => {
-                if argv.len() < 2 {
-                    peer.lines.send("Usage: /pfp <base64 encoded PNG file>").await?;
-                    return Ok(());
-                }
-                let mut user = state_lock.get_user(&peer.user);
-                user.pfp = argv[1].to_string();
-                state_lock.update_user(user);
-
-                send_metadata(&state_lock, peer);
-
-            }
+            
+            
             //"/createchannel" => {
             //    
             //    shared_lock.channels.insert("#".to_string(), SharedChannel::new());
