@@ -7,7 +7,6 @@ use crate::schema::sync_servers;
 use crate::schema::emojis;
 use rand::prelude::*;
 use serde::{Deserialize, Serialize};
-use crate::helper::JsonValue;
 
 #[derive(Queryable, Insertable, Clone, Serialize)]
 #[table_name="channels"]
@@ -117,15 +116,6 @@ impl From<SyncServerQuery> for SyncServer {
             name: item.name,
             idx: item.idx,
         }
-    }
-}
-
-impl SyncServer {
-    pub fn from_json(value: JsonValue, user_uuid: i64, index: i32) -> Result<Self, serde_json::Error> {
-        let mut s: Self = serde_json::from_value(value)?;
-        s.idx = index;
-        s.user_uuid = user_uuid;
-        Ok(s)
     }
 }
 

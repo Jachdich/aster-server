@@ -14,6 +14,7 @@ use crate::shared::Shared;
 use crate::peer::Peer;
 use crate::message::{CookedMessage, MessageType};
 use crate::schema;
+use crate::models::{SyncServer, SyncServerQuery, SyncData};
 
 use diesel::prelude::*;
 use std::sync::Arc;
@@ -45,11 +46,23 @@ pub struct HistoryPacket {
     pub channel: i64,
 }
 
+#[derive(Deserialize)]
+pub struct SyncSetPacket {
+    pub uname: String,
+    pub pfp: String,
+}
+
+#[derive(Deserialize)]
+pub struct SyncSetServersPacket {
+    pub servers: Vec<SyncServer>
+}
+
 #[derive(Deserialize)] pub struct PingPacket;
 #[derive(Deserialize)] pub struct NickPacket { pub nick: String }
 #[derive(Deserialize)] pub struct OnlinePacket;
 #[derive(Deserialize)] pub struct PfpPacket { pub data: String }
-
+#[derive(Deserialize)] pub struct SyncGetPacket;
+#[derive(Deserialize)] pub struct SyncGetServersPacket;
 
 #[enum_dispatch]
 #[derive(Deserialize)]
@@ -69,6 +82,10 @@ enum Packets {
     #[serde(rename = "list_channels")] ListChannelsPacket,
     #[serde(rename = "history")]       HistoryPacket,
     #[serde(rename = "pfp")]           PfpPacket,
+    #[serde(rename = "sync_set")]      SyncSetPacket,
+    #[serde(rename = "sync_get")]      SyncGetPacket,
+    #[serde(rename = "sync_set_servers")] SyncSetServersPacket,
+    #[serde(rename = "sync_get_servers")] SyncGetServersPacket,  
 }
 
 #[enum_dispatch(Packets)]
@@ -196,6 +213,110 @@ impl Packet for PfpPacket {
     }
 }
 
+impl Packet for SyncSetPacket {
+    fn execute(&self, state_lock: &mut LockedState, peer: &mut Peer) -> JsonValue {
+        if !peer.logged_in {
+            return json!({"command": "sync_set", "status": Status::Forbidden as i32});
+        }
+        
+        let mut sync_data = match state_lock.get_sync_data(&peer.user) {
+            Some(data) => data,
+            None => {
+                let data = SyncData::new(peer.user);
+                if let Err(e) = state_lock.insert_sync_data(&data) {
+                    println!("Warn(SyncSetPacket) error inserting new sync data: {:?}", e);
+                    return json!({"command": "sync_set", "status": Status::Forbidden as i32});
+                }
+                data
+            }
+        };
+
+        sync_data.uname = self.uname.clone();
+        sync_data.pfp = self.pfp.clone();
+
+        match state_lock.update_sync_data(sync_data) {
+            Ok(_) => {
+                json!({"command": "sync_set", "status": Status::Ok as i32})
+            },
+            Err(e) => {
+                println!("Warn(SyncSetPacket::execute) error updating sync data: {:?}", e);
+                json!({"command": "sync_set", "status": Status::InternalError as i32})
+            }
+        }
+    }
+}
+
+impl Packet for SyncGetPacket {
+    fn execute(&self, state_lock: &mut LockedState, peer: &mut Peer) -> JsonValue {
+        if !peer.logged_in {
+            return json!({"command": "sync_get", "status": Status::Forbidden as i32});
+        }
+        
+        let sync_data = state_lock.get_sync_data(&peer.user);
+        if let Some(sync_data) = sync_data {
+            json!({"command": "sync_get", 
+                   "uname": sync_data.uname.as_str(),
+                   "pfp": sync_data.pfp.as_str(),
+                   "status": Status::Ok as i32})
+        } else {
+            json!({"command": "sync_get", "status": Status::NotFound as i32})
+        }
+    }
+}
+impl Packet for SyncSetServersPacket {
+    fn execute(&self, state_lock: &mut LockedState, peer: &mut Peer) -> JsonValue {
+        if !peer.logged_in {
+            return json!({"command": "sync_set_servers", "status": Status::Forbidden as i32});
+        }
+
+        diesel::delete(schema::sync_servers::table
+                .filter(schema::sync_servers::user_uuid.eq(peer.user)))
+                .execute(&state_lock.conn).unwrap();
+
+        let mut idx = 0;
+        for sync_server in &self.servers {
+            let mut server = sync_server.clone();
+            server.user_uuid = peer.user;
+            server.idx = idx;
+            if let Err(e) = state_lock.insert_sync_server(server) {
+                println!("Warn(SyncSetServersPacket::execute) error setting sync server: {:?}", e);
+                return json!({"command": "sync_get_servers", "status": Status::InternalError as i32});
+            }
+            idx += 1;
+        }
+        
+        json!({"command": "sync_set_servers", "status": Status::Ok as i32})
+    }
+}
+
+impl Packet for SyncGetServersPacket {
+    fn execute(&self, state_lock: &mut LockedState, peer: &mut Peer) -> JsonValue {
+        if !peer.logged_in {
+            return json!({"command": "sync_get_servers", "status": Status::Forbidden as i32});
+        }
+        let servers = schema::sync_servers::table
+                .filter(schema::sync_servers::user_uuid.eq(peer.user))
+                .order(schema::sync_servers::idx.asc())
+                .load::<SyncServerQuery>(&state_lock.conn);
+
+        match servers {
+            Ok(servers) => {
+                let servers = servers
+                                .into_iter()
+                                .map(SyncServer::from)
+                                .collect::<Vec<SyncServer>>();
+                json!({"command": "sync_get_servers",
+                       "servers": servers,
+                       "status": Status::Ok as i32})
+            },
+            Err(e) => {
+                println!("Warn(SyncGetServersPacket::execute) error getting sync servers: {:?}", e);
+                json!({"command": "sync_set_servers", "status": Status::InternalError as i32})
+            }
+        }
+    }
+}
+
 
 pub async fn process_command(msg: &String, state: Arc<Mutex<Shared>>, peer: &mut Peer) -> Result<(), Box<dyn Error>> {
     let response = match serde_json::from_str::<Packets>(msg) {
@@ -203,17 +324,14 @@ pub async fn process_command(msg: &String, state: Arc<Mutex<Shared>>, peer: &mut
             let mut state_lock = state.lock().await;
             packets.execute(&mut state_lock, peer)
         },
-        Err(_) => {
+        Err(e) => {
+            println!("Warn(process_command) error decoding packet '{}': {:?}", msg, e);
             json!({"command": "unknown", "status": Status::BadRequest as i32})
         }
     };
 
     peer.lines.send(response.to_string() + "\n").await?;
 /*
-        //commands that can be run only if the user is logged in
-        match argv[0] {
-            
-            
             //"/createchannel" => {
             //    
             //    shared_lock.channels.insert("#".to_string(), SharedChannel::new());
@@ -226,93 +344,9 @@ pub async fn process_command(msg: &String, state: Arc<Mutex<Shared>>, peer: &mut
                 diesel::delete(schema::messages::table.filter(
                     schema::messages::author_uuid.eq(uuid))).execute(&state_lock.conn).unwrap();
             }
-
-            "/sync_set" => {
-                if argv.len() < 3 {
-                    peer.lines.send(json::object!{command: "sync_set", message: "Too few arguments", code: -1}.dump()).await?; 
-                } else {
-                    let val = argv[2..].join(" ");
-                    let mut sync_data = match state_lock.get_sync_data(&peer.user) {
-                        Some(data) => data,
-                        None => {
-                            let data = SyncData::new(peer.user);
-                            state_lock.insert_sync_data(&data);
-                            data
-                        }
-                    };
-                    
-                    match argv[1] {
-                        "uname" => sync_data.uname = val,
-                        "pfp" => sync_data.pfp = val,
-                        _ => //TODO overkill?
-                             peer.lines.send(json::object!{command: "sync_get", key: argv[1], message: "Invalid key", code: -1}.dump()).await?,   
-                    }
-
-                    state_lock.update_sync_data(sync_data);
-                }
-            }
-
-            "/sync_add_server" => {
-                let json_data = json::parse(&argv[1..].join(" "));
-                if let Ok(json_data) = json_data {
-                    let last_server = schema::sync_servers::table
-                            .filter(schema::sync_servers::user_uuid.eq(peer.user))
-                            .order(schema::sync_servers::idx.desc())
-                            .limit(1)
-                            .load::<SyncServerQuery>(&state_lock.conn).unwrap();
-                    let idx = if last_server.len() > 0 {
-                        last_server[0].idx + 1
-                    } else {
-                        0
-                    };
-                    let server = SyncServer::from_json(&json_data, peer.user, idx);
-                    state_lock.insert_sync_server(server);
-                } else {
-                    peer.lines.send(json::object!{command: "sync_add_server", code: -1, message: "Invalid JSON data"}.dump()).await?;
-                }
-            }
-
-            "/sync_set_servers" => {
-                let json_data = json::parse(&argv[1..].join(" "));
-                if let Ok(json_data) = json_data {
-                    diesel::delete(schema::sync_servers::table
-                            .filter(schema::sync_servers::user_uuid.eq(peer.user)))
-                            .execute(&state_lock.conn).unwrap();
-
-                    let mut idx = 0;
-                    for sync_json in json_data["data"].members() {
-                        let server = SyncServer::from_json(&sync_json, peer.user, idx);
-                        state_lock.insert_sync_server(server);
-                        idx += 1;
-                    }
-                } else {
-                    peer.lines.send(json::object!{command: "sync_add_server", code: -1, message: "Invalid JSON data"}.dump()).await?;
-                }
-            }
-
-            "/sync_get_servers" => {
-                let servers = schema::sync_servers::table
-                        .filter(schema::sync_servers::user_uuid.eq(peer.user))
-                        .order(schema::sync_servers::idx.asc())
-                        .load::<SyncServerQuery>(&state_lock.conn).unwrap();
-
-                peer.lines.send(json::object!{
-                        command: "sync_get_servers",
-                        data: servers.iter().map(|x| SyncServer::from(x.clone()).as_json()).collect::<Vec<json::JsonValue>>(),
-                        code: 0}.dump()).await?;
-            }
-
-            "/sync_get" => {
-                let sync_data = state_lock.get_sync_data(&peer.user);
-                if let Some(sync_data) = sync_data {
-                    peer.lines.send(json::object!{command: "sync_get", uname: sync_data.uname.as_str(), pfp: sync_data.pfp.as_str(), code: 0}.dump()).await?;
-                } else {
-                    peer.lines.send(json::object!{command: "sync_get", message: "User has no sync data", code: -2}.dump()).await?;
-                }
-            }
             _ => ()
-        }*/
-    /*} else {
+        }
+    } else {
         json::object!{command: "unknown", status: Status::BadRequest as i32}
     };*/
     Ok(())
