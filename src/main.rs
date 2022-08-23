@@ -203,7 +203,7 @@ async fn process(state: Arc<Mutex<Shared>>, stream: TlsStream<TcpStream>, addr: 
         state.peers.push(Pontoon::from_peer(&peer));
     }
 
-    peer.lines.send(json!({"command": "API_version", "rel": API_VERSION_RELEASE, "maj": API_VERSION_MAJOR, "min": API_VERSION_MINOR}).to_string()).await?;
+    peer.lines.send(json!({"command": "API_version", "rel": API_VERSION_RELEASE, "maj": API_VERSION_MAJOR, "min": API_VERSION_MINOR, "status": 200}).to_string()).await?;
     //TODO handshake protocol
     
     while let Some(result) = peer.next().await {
@@ -217,6 +217,7 @@ async fn process(state: Arc<Mutex<Shared>>, stream: TlsStream<TcpStream>, addr: 
                     MessageType::Cooked(msg) => {
                         let mut msg_json = serde_json::to_value(&msg)?;
                         msg_json["command"] = "content".into();
+                        msg_json["status"] = 200.into();
                         peer.lines.send(&msg_json.to_string()).await?;
                     }
                     MessageType::Raw(msg) => peer.lines.send(msg.to_string()).await?,
@@ -228,12 +229,15 @@ async fn process(state: Arc<Mutex<Shared>>, stream: TlsStream<TcpStream>, addr: 
         }
     }
 
+    let mut state = state.lock().await;
     if peer.user != NO_UID {
-        let mut state = state.lock().await;
         if let Some(index) = state.online.iter().position(|x| *x == peer.user) {
             state.online.remove(index);
             send_online(&state);
         }
+    }
+    if let Some(index) = state.peers.iter().position(|x| x.addr == peer.addr) {
+        state.peers.remove(index);
     }
 
     Ok(())

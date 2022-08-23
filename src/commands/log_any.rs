@@ -21,19 +21,19 @@ impl Packet for GetMetadataPacket {
         for v in &state_lock.get_users() {
             meta.push(serde_json::to_value(v).unwrap());
         }
-        json!({"command": "metadata", "data": meta})
+        json!({"command": "metadata", "data": meta, "status": Status::Ok as i32})
     }
 }
 
 impl Packet for GetIconPacket {
     fn execute(&self, _: &mut LockedState, _: &mut Peer) -> JsonValue {
-        json!({"command": "get_icon", "data": CONF.icon.to_owned()})
+        json!({"command": "get_icon", "data": CONF.icon.to_owned(), "status": Status::Ok as i32})
     }
 }
 
 impl Packet for GetNamePacket {
     fn execute(&self, _: &mut LockedState, _: &mut Peer) -> JsonValue {
-        json!({"command": "get_name", "data": CONF.name.to_owned()})
+        json!({"command": "get_name", "data": CONF.name.to_owned(), "status": Status::Ok as i32})
     }
 }
 
@@ -45,7 +45,7 @@ impl Packet for ListChannelsPacket {
             res.push(serde_json::to_value(channel).unwrap());
         }
         
-        json!({"command": "list_channels", "data": res})
+        json!({"command": "list_channels", "data": res, "status": Status::Ok as i32})
     }
 }
 
@@ -56,9 +56,9 @@ impl Packet for GetEmojiPacket {
             .limit(1)
             .load::<Emoji>(&state_lock.conn).unwrap();
         if results.len() < 1 {
-            json!({"command": "get_emoji", "code": Status::NotFound as i32})
+            json!({"command": "get_emoji", "status": Status::NotFound as i32})
         } else {
-            json!({"command": "get_emoji", "code": Status::Ok as i32, "data": serde_json::to_value(results.remove(0)).unwrap()})
+            json!({"command": "get_emoji", "status": Status::Ok as i32, "data": serde_json::to_value(results.remove(0)).unwrap()})
         }
     }
 }
@@ -66,7 +66,7 @@ impl Packet for GetEmojiPacket {
 impl Packet for ListEmojiPacket {
     fn execute(&self, state_lock: &mut LockedState, _: &mut Peer) -> JsonValue {
         let results = schema::emojis::table.load::<Emoji>(&state_lock.conn).unwrap();
-        json!({"command": "list_emoji", "code": Status::Ok as i32,
+        json!({"command": "list_emoji", "status": Status::Ok as i32,
             "data": results.iter().map(|res|
                 json!({"name": res.name.clone(), "uuid": res.uuid})
             ).collect::<Vec<JsonValue>>()

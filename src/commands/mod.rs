@@ -36,7 +36,7 @@ pub enum Status {
 }
 
 #[derive(Deserialize)]
-pub struct ContentPacket {
+pub struct SendPacket {
     pub content: String,
     pub channel: i64,
 }
@@ -73,7 +73,7 @@ enum Packets {
     #[serde(rename = "ping")]          PingPacket,
     #[serde(rename = "nick")]          NickPacket,
     #[serde(rename = "online")]        OnlinePacket,
-    #[serde(rename = "content")]       ContentPacket,
+    #[serde(rename = "send")]          SendPacket,
     #[serde(rename = "get_metadata")]  GetMetadataPacket,
     #[serde(rename = "get_name")]      GetNamePacket,
     #[serde(rename = "get_icon")]      GetIconPacket,
@@ -98,7 +98,7 @@ pub trait Packet {
 
 fn send_metadata(state_lock: &LockedState, peer: &Peer) {
     let meta = json!([serde_json::to_value(state_lock.get_user(&peer.user)).unwrap()]);
-    state_lock.send_to_all(MessageType::Raw(json!({"command": "metadata", "data": meta})));
+    state_lock.send_to_all(MessageType::Raw(json!({"command": "metadata", "data": meta, "status": Status::Ok as i32})));
 }
 
 pub fn send_online(state_lock: &LockedState) {
@@ -109,6 +109,7 @@ pub fn send_online(state_lock: &LockedState) {
     let final_json = json!({
         "command": "online",
         "data": res,
+        "status": Status::Ok as i32,
     });
     state_lock.send_to_all(MessageType::Raw(final_json));
 }
@@ -153,10 +154,10 @@ impl Packet for OnlinePacket {
     }
 }
 
-impl Packet for ContentPacket {
+impl Packet for SendPacket {
     fn execute(&self, state_lock: &mut LockedState, peer: &mut Peer) -> JsonValue {
         if !peer.logged_in {
-            return json!({"command": "content", "status": Status::Forbidden as i32});
+            return json!({"command": "send", "status": Status::Forbidden as i32});
         }
         let msg = CookedMessage {
             uuid: gen_uuid(),
@@ -167,7 +168,7 @@ impl Packet for ContentPacket {
             rowid: 0,
         };
         state_lock.send_to_all(MessageType::Cooked(msg));
-        json!({"command": "content", "status": Status::Ok as i32})
+        json!({"command": "send", "status": Status::Ok as i32})
     }
 }
 
@@ -330,7 +331,7 @@ pub async fn process_command(msg: &String, state: Arc<Mutex<Shared>>, peer: &mut
         }
     };
 
-    peer.lines.send(response.to_string() + "\n").await?;
+    peer.lines.send(response.to_string()).await?;
 /*
             //"/createchannel" => {
             //    
