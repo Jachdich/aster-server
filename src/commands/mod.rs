@@ -63,6 +63,7 @@ pub struct SyncSetServersPacket {
 #[derive(Deserialize)] pub struct PfpPacket { pub data: String }
 #[derive(Deserialize)] pub struct SyncGetPacket;
 #[derive(Deserialize)] pub struct SyncGetServersPacket;
+#[derive(Deserialize)] pub struct LeavePacket;
 
 #[enum_dispatch]
 #[derive(Deserialize)]
@@ -86,6 +87,7 @@ enum Packets {
     #[serde(rename = "sync_get")]      SyncGetPacket,
     #[serde(rename = "sync_set_servers")] SyncSetServersPacket,
     #[serde(rename = "sync_get_servers")] SyncGetServersPacket,  
+    #[serde(rename = "leave")]         LeavePacket,
 }
 
 #[enum_dispatch(Packets)]
@@ -112,6 +114,12 @@ pub fn send_online(state_lock: &LockedState) {
         "status": Status::Ok as i32,
     });
     state_lock.send_to_all(MessageType::Raw(final_json));
+}
+
+impl Packet for LeavePacket {
+    fn execute(&self, _: &mut LockedState, _: &mut Peer) -> JsonValue {
+        json!({"command": "leave", "status": Status::Ok as i32})
+    }
 }
 
 impl Packet for PingPacket {
