@@ -14,6 +14,7 @@ use serde::Deserialize;
 #[derive(Deserialize)] pub struct ListChannelsPacket;
 #[derive(Deserialize)] pub struct ListEmojiPacket;
 #[derive(Deserialize)] pub struct GetEmojiPacket { pub uid: i64 }
+#[derive(Deserialize)] pub struct GetUserPacket { pub uuid: i64 }
 
 impl Packet for GetMetadataPacket {
     fn execute(&self, state_lock: &mut LockedState, _: &mut Peer) -> JsonValue {
@@ -24,6 +25,8 @@ impl Packet for GetMetadataPacket {
         json!({"command": "metadata", "data": meta, "status": Status::Ok as i32})
     }
 }
+
+
 
 impl Packet for GetIconPacket {
     fn execute(&self, _: &mut LockedState, _: &mut Peer) -> JsonValue {

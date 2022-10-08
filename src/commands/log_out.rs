@@ -1,12 +1,12 @@
-use crate::helper::{LockedState, JsonValue, gen_uuid};
-use crate::commands::{Status, Packet};
+use crate::commands::{send_metadata, send_online};
+use crate::commands::{Packet, Status};
+use crate::helper::{gen_uuid, JsonValue, LockedState};
+use crate::models::User;
 use crate::Peer;
 use crate::CONF;
-use crate::models::User;
-use crate::commands::{send_metadata, send_online};
 
-use serde_json::json;
 use serde::Deserialize;
+use serde_json::json;
 
 #[derive(Deserialize)]
 pub struct RegisterPacket {
@@ -27,9 +27,9 @@ impl Packet for RegisterPacket {
             //registering doesn't make sense when logged in
             return json!({"command": "register", "status": Status::MethodNotAllowed as i32});
         }
-    
+
         let uuid = gen_uuid();
-        let user = User{
+        let user = User {
             name: self.name.to_owned(),
             pfp: CONF.default_pfp.to_owned(),
             uuid,
@@ -43,11 +43,7 @@ impl Packet for RegisterPacket {
         peer.logged_in = true;
         peer.user = uuid;
 
-        if state_lock.online.iter().any(|x| *x == peer.user) {
-            println!("Error(register): user already online?");
-        } else {
-            state_lock.online.push(peer.user);
-        }
+        state_lock.inc_online(peer.user);
 
         send_metadata(state_lock, peer);
         send_online(state_lock);
@@ -62,10 +58,11 @@ impl Packet for LoginPacket {
             //logging in doesn't make sense when already logged in
             return json!({"command": "login", "status": Status::MethodNotAllowed as i32});
         }
-    
+
         let uuid = if let Some(uname) = &self.uname {
-            if let Some(user) = state_lock.get_user_by_name(uname) { user.uuid }
-            else {
+            if let Some(user) = state_lock.get_user_by_name(uname) {
+                user.uuid
+            } else {
                 return json!({"command": "login", "status": Status::NotFound as i32});
             }
         } else if let Some(uuid) = self.uuid {
@@ -78,14 +75,10 @@ impl Packet for LoginPacket {
         //TODO confirm password
         peer.user = uuid;
         peer.logged_in = true;
-        if state_lock.online.iter().any(|x| *x == peer.user) {
-            println!("Error(login): user already online?");
-        } else {
-            state_lock.online.push(peer.user);
-        }
+
+        state_lock.inc_online(peer.user);
         send_metadata(&state_lock, peer);
         send_online(&state_lock);
         json!({"command": "login", "status": Status::Ok as i32, "uuid": uuid})
-        
     }
 }
