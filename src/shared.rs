@@ -1,22 +1,26 @@
-use crate::schema;
-use diesel::prelude::*;
-use crate::models::*;
 use crate::message::*;
+use crate::models::*;
 use crate::peer::Pontoon;
+use crate::schema;
 use crate::CONF;
+use diesel::prelude::*;
+use std::collections::HashMap;
 
 pub struct Shared {
-    pub online: Vec<i64>,
+    pub online: HashMap<i64, u32>,
     pub conn: SqliteConnection,
     pub peers: Vec<Pontoon>,
 }
 
 impl Shared {
     pub fn new() -> Self {
-        let sqlitedb = SqliteConnection::establish(&CONF.database_file).expect(&format!("Fatal(Shared::new) connecting to the database file {}", &CONF.database_file));
+        let sqlitedb = SqliteConnection::establish(&CONF.database_file).expect(&format!(
+            "Fatal(Shared::new) connecting to the database file {}",
+            &CONF.database_file
+        ));
 
         Shared {
-            online: Vec::new(),
+            online: HashMap::new(),
             conn: sqlitedb,
             peers: Vec::new(),
         }
@@ -26,28 +30,38 @@ impl Shared {
         let channels = self.get_channels();
         if channels.len() == 0 {
             let new_channel = Channel::new("general");
-            self.insert_channel(new_channel).expect("Fatal(Shared::load): couldn't insert channel, broken database?");
+            self.insert_channel(new_channel)
+                .expect("Fatal(Shared::load): couldn't insert channel, broken database?");
         }
     }
 
     pub fn send_to_all(&self, message: MessageType) {
-    	for peer in self.peers.iter() {
+        for peer in self.peers.iter() {
             if let Err(e) = peer.tx.send(message.clone()) {
                 panic!("Fatal(Shared::send_to_all): I think this is unlikely but `peer.tx.send` failed. idk bug me to fix it ig. {:?}", e);
             }
-    	}
+        }
+    }
+
+    pub fn inc_online(&mut self, user: i64) {
+        let orig_count = match self.online.get(&user) {
+            Some(count) => *count,
+            None => 0,
+        };
+        self.online.insert(user, orig_count + 1);
     }
 
     //TODO WHAT??
     // fn save(&mut self) {
-        // 
+    //
     // }
 
     pub fn get_user_by_name(&self, name: &str) -> Option<User> {
         let mut query_res = schema::users::table
-                        .filter(schema::users::name.eq(name))
-                        .limit(1)
-                        .load::<User>(&self.conn).ok()?;
+            .filter(schema::users::name.eq(name))
+            .limit(1)
+            .load::<User>(&self.conn)
+            .ok()?;
         query_res.pop()
     }
 
@@ -69,7 +83,7 @@ impl Shared {
         return results.remove(0);
     }
 
-    //pub fn get_password(&self, user: &i64) -> 
+    //pub fn get_password(&self, user: &i64) ->
 
     pub fn add_to_history(&self, msg: CookedMessage) {
         let new_msg = CookedMessageInsertable::new(msg);
@@ -112,33 +126,45 @@ impl Shared {
     }
 
     pub fn insert_channel(&self, channel: Channel) -> Result<usize, diesel::result::Error> {
-        diesel::insert_into(schema::channels::table).values(&channel).execute(&self.conn)
+        diesel::insert_into(schema::channels::table)
+            .values(&channel)
+            .execute(&self.conn)
     }
 
     pub fn insert_user(&self, user: User) -> Result<usize, diesel::result::Error> {
-        diesel::insert_into(schema::users::table).values(&user).execute(&self.conn)
+        diesel::insert_into(schema::users::table)
+            .values(&user)
+            .execute(&self.conn)
     }
 
     pub fn insert_sync_data(&self, data: &SyncData) -> Result<usize, diesel::result::Error> {
-        diesel::insert_into(schema::sync_data::table).values(data).execute(&self.conn)
+        diesel::insert_into(schema::sync_data::table)
+            .values(data)
+            .execute(&self.conn)
     }
 
     pub fn insert_sync_server(&self, data: SyncServer) -> Result<usize, diesel::result::Error> {
-        diesel::insert_into(schema::sync_servers::table).values(data).execute(&self.conn)
+        diesel::insert_into(schema::sync_servers::table)
+            .values(data)
+            .execute(&self.conn)
     }
 
     pub fn update_user(&self, user: User) -> Result<usize, diesel::result::Error> {
         diesel::update(schema::users::table.find(user.uuid))
-            .set((schema::users::name.eq(user.name),
-                  schema::users::pfp.eq(user.pfp),
-                  schema::users::group_uuid.eq(user.group_uuid)))
+            .set((
+                schema::users::name.eq(user.name),
+                schema::users::pfp.eq(user.pfp),
+                schema::users::group_uuid.eq(user.group_uuid),
+            ))
             .execute(&self.conn)
     }
 
     pub fn update_sync_data(&self, data: SyncData) -> Result<usize, diesel::result::Error> {
         diesel::update(schema::sync_data::table.find(data.user_uuid))
-            .set((schema::sync_data::uname.eq(data.uname),
-                  schema::sync_data::pfp.eq(data.pfp)))
+            .set((
+                schema::sync_data::uname.eq(data.uname),
+                schema::sync_data::pfp.eq(data.pfp),
+            ))
             .execute(&self.conn)
     }
 }

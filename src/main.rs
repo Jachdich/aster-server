@@ -6,36 +6,36 @@ extern crate lazy_static;
 #[macro_use]
 extern crate diesel;
 
+use serde::Deserialize;
+use serde_json::json;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Mutex;
+use tokio_native_tls::TlsStream;
 use tokio_stream::StreamExt;
-use tokio_native_tls::{TlsStream};
 use tokio_util::codec::{Framed, LinesCodec};
-use serde_json::json;
-use serde::Deserialize;
 
 use futures::SinkExt;
 use std::error::Error;
+use std::io::Read;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::io::Read;
 
-pub mod schema;
-pub mod models;
-pub mod shared;
-pub mod message;
-pub mod peer;
-pub mod helper;
-pub mod permissions;
 pub mod commands;
+pub mod helper;
+pub mod message;
+pub mod models;
+pub mod peer;
+pub mod permissions;
+pub mod schema;
+pub mod shared;
 
+use crate::commands::send_online;
+use crate::helper::JsonValue;
+use crate::helper::NO_UID;
 use message::*;
 use peer::Peer;
 use peer::Pontoon;
 use shared::Shared;
-use crate::commands::send_online;
-use crate::helper::JsonValue;
-use crate::helper::NO_UID;
 
 const API_VERSION_RELEASE: u8 = 0;
 const API_VERSION_MAJOR: u8 = 2;
@@ -61,17 +61,19 @@ fn read_b64(fname: &str) -> Option<String> {
 
 lazy_static! {
     pub static ref CONF: Config = {
-        let mut file = std::fs::File::open("config.json")
-            .expect("Couldn't find config.json!");
+        let mut file = std::fs::File::open("config.json").expect("Couldn't find config.json!");
         let mut data = String::new();
-        file.read_to_string(&mut data).expect("Couldn't read config.json!");
+        file.read_to_string(&mut data)
+            .expect("Couldn't read config.json!");
         let res: Result<Config, serde_json::Error> = serde_json::from_str(&data);
         match res {
             Ok(mut cfg) => {
-                let default_pfp: String = read_b64(&cfg.default_pfp)
-                        .expect(&format!("Default profile picture file '{}' not found!", cfg.default_pfp));
-                let icon: String = read_b64(&cfg.icon)
-                        .expect(&format!("Icon file '{}' not found!", cfg.icon));
+                let default_pfp: String = read_b64(&cfg.default_pfp).expect(&format!(
+                    "Default profile picture file '{}' not found!",
+                    cfg.default_pfp
+                ));
+                let icon: String =
+                    read_b64(&cfg.icon).expect(&format!("Icon file '{}' not found!", cfg.icon));
 
                 cfg.icon = icon;
                 cfg.default_pfp = default_pfp;
@@ -96,7 +98,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         start_voice_server(Arc::clone(&state));
     }
     let addr = format!("{}:{}", &CONF.addr, CONF.port);
-    
+
     let listener = TcpListener::bind(&addr).await?;
     println!("Listening on {}", &addr);
 
@@ -104,9 +106,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let cert = native_tls::Identity::from_pkcs12(der, "").unwrap();
 
     let tls_acceptor = tokio_native_tls::TlsAcceptor::from(
-        native_tls::TlsAcceptor::builder(cert).build().unwrap()
+        native_tls::TlsAcceptor::builder(cert).build().unwrap(),
     );
-
 
     loop {
         let (stream, addr) = listener.accept().await?;
@@ -145,7 +146,7 @@ async fn listen_for_voice<'a>(state: &Arc<Mutex<Shared>>) -> Result<(), Box<dyn 
     let mut lines = Framed::new(stream, LinesCodec::new());
 
     let mut joined: Vec<i64> = Vec::new();
-    
+
     while let Some(Ok(result)) = lines.next().await {
         let parsed: Result<JsonValue, serde_json::Error> = serde_json::from_str(&result);
         match parsed {
@@ -190,12 +191,20 @@ async fn listen_for_voice<'a>(state: &Arc<Mutex<Shared>>) -> Result<(), Box<dyn 
     Ok(())
 }
 
-async fn process_internal_command(msg: &JsonValue, _state: Arc<Mutex<Shared>>, _peer: &mut Peer) -> Result<(), Box<dyn Error>> {
+async fn process_internal_command(
+    msg: &JsonValue,
+    _state: Arc<Mutex<Shared>>,
+    _peer: &mut Peer,
+) -> Result<(), Box<dyn Error>> {
     println!("internal command: {:?}", msg);
     Ok(())
 }
 
-async fn process(state: Arc<Mutex<Shared>>, stream: TlsStream<TcpStream>, addr: SocketAddr) -> Result<(), Box<dyn Error>> {
+async fn process(
+    state: Arc<Mutex<Shared>>,
+    stream: TlsStream<TcpStream>,
+    addr: SocketAddr,
+) -> Result<(), Box<dyn Error>> {
     let lines = Framed::new(stream, LinesCodec::new());
     let mut peer = Peer::new(lines, addr).await?;
     {
@@ -205,34 +214,39 @@ async fn process(state: Arc<Mutex<Shared>>, stream: TlsStream<TcpStream>, addr: 
 
     peer.lines.send(json!({"command": "API_version", "rel": API_VERSION_RELEASE, "maj": API_VERSION_MAJOR, "min": API_VERSION_MINOR, "status": 200}).to_string()).await?;
     //TODO handshake protocol
-    
+
     while let Some(result) = peer.next().await {
         match result {
             Ok(Message::Broadcast(msg)) => {
                 commands::process_command(&msg, state.clone(), &mut peer).await?;
             }
 
-            Ok(Message::Received(msg)) => {
-                match msg {
-                    MessageType::Cooked(msg) => {
-                        let mut msg_json = serde_json::to_value(&msg)?;
-                        msg_json["command"] = "content".into();
-                        msg_json["status"] = 200.into();
-                        peer.lines.send(&msg_json.to_string()).await?;
-                    }
-                    MessageType::Raw(msg) => peer.lines.send(msg.to_string()).await?,
-                    MessageType::Internal(msg) => process_internal_command(&msg, state.clone(), &mut peer).await?,
+            Ok(Message::Received(msg)) => match msg {
+                MessageType::Cooked(msg) => {
+                    let mut msg_json = serde_json::to_value(&msg)?;
+                    msg_json["command"] = "content".into();
+                    msg_json["status"] = 200.into();
+                    peer.lines.send(&msg_json.to_string()).await?;
                 }
-            }
+                MessageType::Raw(msg) => peer.lines.send(msg.to_string()).await?,
+                MessageType::Internal(msg) => {
+                    process_internal_command(&msg, state.clone(), &mut peer).await?
+                }
+            },
 
-            Err(e) => { println!("Error lmao u figure it out: {}", e); }
+            Err(e) => {
+                println!("Error lmao u figure it out: {}", e);
+            }
         }
     }
 
     let mut state = state.lock().await;
     if peer.user != NO_UID {
-        if let Some(index) = state.online.iter().position(|x| *x == peer.user) {
-            state.online.remove(index);
+        let count = *state.online.get(&peer.user).unwrap_or(&0);
+        if count > 0 {
+            state.online.insert(peer.user, count - 1);
+        }
+        if count == 1 {
             send_online(&state);
         }
     }
