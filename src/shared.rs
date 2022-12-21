@@ -38,7 +38,7 @@ impl Shared {
     pub fn send_to_all(&self, message: MessageType) {
         for peer in self.peers.iter() {
             if let Err(e) = peer.tx.send(message.clone()) {
-                panic!("Fatal(Shared::send_to_all): I think this is unlikely but `peer.tx.send` failed. idk bug me to fix it ig. {:?}", e);
+                println!("Error(Shared::send_to_all): I think this is unlikely but `peer.tx.send` failed. idk bug me to fix it ig. {:?}", e);
             }
         }
     }
