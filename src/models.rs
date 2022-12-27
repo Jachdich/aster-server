@@ -122,9 +122,9 @@ impl From<SyncServerQuery> for SyncServer {
 impl Channel {
     pub fn new(name: &str) -> Self {
         let uuid: i64 = gen_uuid();
-        return Channel {
-            uuid: uuid,
+        Channel {
+            uuid,
             name: name.to_string(),
-        };
+        }
     }
 }

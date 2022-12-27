@@ -36,9 +36,9 @@ impl Packet for RegisterPacket {
             group_uuid: 0,
         };
 
-        match state_lock.insert_user(user) {
-            Err(_) => return json!({"command": "register", "status": Status::InternalError as i32}),
-            _ => (),
+        if let Err(e) = state_lock.insert_user(user) {
+            println!("Error(RegisterPacket): inserting user: {}", e);
+            return json!({"command": "register", "status": Status::InternalError as i32});
         }
         peer.logged_in = true;
         peer.user = uuid;
@@ -77,8 +77,8 @@ impl Packet for LoginPacket {
         peer.logged_in = true;
 
         state_lock.inc_online(peer.user);
-        send_metadata(&state_lock, peer);
-        send_online(&state_lock);
+        send_metadata(state_lock, peer);
+        send_online(state_lock);
         json!({"command": "login", "status": Status::Ok as i32, "uuid": uuid})
     }
 }

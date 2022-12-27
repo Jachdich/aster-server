@@ -55,7 +55,7 @@ impl Packet for GetEmojiPacket {
             .filter(schema::emojis::uuid.eq(self.uid))
             .limit(1)
             .load::<Emoji>(&state_lock.conn).unwrap();
-        if results.len() < 1 {
+        if results.is_empty() {
             json!({"command": "get_emoji", "status": Status::NotFound as i32})
         } else {
             json!({"command": "get_emoji", "status": Status::Ok as i32, "data": serde_json::to_value(results.remove(0)).unwrap()})

@@ -30,7 +30,7 @@ impl Pontoon {
     pub fn from_peer(peer: &Peer) -> Self {
         Pontoon {
             tx: peer.tx.clone(),
-            addr: peer.addr.clone(),
+            addr: peer.addr,
             uuid: peer.user,
         }
     }

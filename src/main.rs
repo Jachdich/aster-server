@@ -68,12 +68,12 @@ lazy_static! {
         let res: Result<Config, serde_json::Error> = serde_json::from_str(&data);
         match res {
             Ok(mut cfg) => {
-                let default_pfp: String = read_b64(&cfg.default_pfp).expect(&format!(
+                let default_pfp: String = read_b64(&cfg.default_pfp).unwrap_or_else(|| panic!(
                     "Default profile picture file '{}' not found!",
                     cfg.default_pfp
                 ));
                 let icon: String =
-                    read_b64(&cfg.icon).expect(&format!("Icon file '{}' not found!", cfg.icon));
+                    read_b64(&cfg.icon).unwrap_or_else(|| panic!("Icon file '{}' not found!", cfg.icon));
 
                 cfg.icon = icon;
                 cfg.default_pfp = default_pfp;
@@ -164,13 +164,11 @@ async fn listen_for_voice<'a>(state: &Arc<Mutex<Shared>>) -> Result<(), Box<dyn 
                     }
                 }
                 if parsed["command"] == "leave" {
-                    let mut idx = 0;
-                    for peer in &joined {
+                    for (idx, peer) in joined.iter().enumerate() {
                         if *peer == parsed["uuid"].as_i64().unwrap() {
                             joined.remove(idx);
                             break;
                         }
-                        idx += 1;
                     }
                     {
                         let state = state.lock().await;
