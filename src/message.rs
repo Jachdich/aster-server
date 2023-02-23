@@ -1,6 +1,7 @@
 use crate::schema::messages;
 use crate::helper::JsonValue;
 use serde::{Deserialize, Serialize};
+use diesel::{Queryable, Insertable};
 
 #[derive(Queryable, Clone, Debug, Serialize, Deserialize)]
 pub struct CookedMessage {
@@ -14,7 +15,7 @@ pub struct CookedMessage {
 }
 
 #[derive(Insertable, Clone)]
-#[table_name="messages"]
+#[diesel(table_name = messages)]
 pub struct CookedMessageInsertable {
     pub uuid: i64,
     pub content: String,

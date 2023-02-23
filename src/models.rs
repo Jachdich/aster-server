@@ -1,15 +1,10 @@
-use crate::schema::channels;
-use crate::schema::users;
-use crate::schema::groups;
-use crate::schema::user_groups;
-use crate::schema::sync_data;
-use crate::schema::sync_servers;
-use crate::schema::emojis;
+use crate::schema::*;
 use rand::prelude::*;
 use serde::{Deserialize, Serialize};
+use diesel::{Queryable, Insertable};
 
 #[derive(Queryable, Insertable, Clone, Serialize)]
-#[table_name="channels"]
+#[diesel(table_name=channels)]
 pub struct Channel {
     pub uuid: i64,
     pub name: String,
@@ -18,7 +13,7 @@ pub struct Channel {
 //message.rs for message models
 
 #[derive(Queryable, Insertable, Clone, Serialize, Deserialize)]
-#[table_name="users"]
+#[diesel(table_name=users)]
 pub struct User {
     pub uuid: i64,
     pub name: String,
@@ -27,7 +22,7 @@ pub struct User {
 }
 
 #[derive(Queryable, Insertable, Clone, Serialize, Deserialize)]
-#[table_name="groups"]
+#[diesel(table_name=groups)]
 pub struct Group {
     pub uuid: i64,
     pub permissions: i64,
@@ -36,7 +31,7 @@ pub struct Group {
 }
 
 #[derive(Queryable, Insertable, Clone)]
-#[table_name="user_groups"]
+#[diesel(table_name=user_groups)]
 pub struct UserGroupConnection {
     link_id: i32,
     pub user_uuid: i64,
@@ -44,7 +39,7 @@ pub struct UserGroupConnection {
 }
 
 #[derive(Queryable, Insertable, Clone)]
-#[table_name="sync_data"]
+#[diesel(table_name=sync_data)]
 pub struct SyncData {
     pub user_uuid: i64,
     pub uname: String,
@@ -52,7 +47,7 @@ pub struct SyncData {
 }
 
 #[derive(Insertable, Clone, Serialize, Deserialize)]
-#[table_name="sync_servers"]
+#[diesel(table_name=sync_servers)]
 pub struct SyncServer {
     pub user_uuid: i64,
     pub server_uuid: i64,
@@ -76,7 +71,7 @@ pub struct SyncServerQuery {
 }
 
 #[derive(Queryable, Insertable, Clone, Serialize)]
-#[table_name="emojis"]
+#[diesel(table_name=emojis)]
 pub struct Emoji {
     pub uuid: i64,
     pub name: String,
@@ -123,7 +118,7 @@ impl Channel {
     pub fn new(name: &str) -> Self {
         let uuid: i64 = gen_uuid();
         return Channel {
-            uuid: uuid,
+            uuid,
             name: name.to_string(),
         };
     }

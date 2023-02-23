@@ -77,8 +77,8 @@ impl Packet for LoginPacket {
         peer.logged_in = true;
 
         state_lock.inc_online(peer.user);
-        send_metadata(&state_lock, peer);
-        send_online(&state_lock);
+        send_metadata(state_lock, peer);
+        send_online(state_lock);
         json!({"command": "login", "status": Status::Ok as i32, "uuid": uuid})
     }
 }

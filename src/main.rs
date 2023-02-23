@@ -1,9 +1,7 @@
 #![deny(warnings)]
 
 extern crate tokio;
-#[macro_use]
 extern crate lazy_static;
-#[macro_use]
 extern crate diesel;
 
 use serde::Deserialize;
@@ -13,6 +11,8 @@ use tokio::sync::Mutex;
 use tokio_native_tls::TlsStream;
 use tokio_stream::StreamExt;
 use tokio_util::codec::{Framed, LinesCodec};
+use base64::{Engine as _, engine::general_purpose};
+use lazy_static::lazy_static;
 
 use futures::SinkExt;
 use std::error::Error;
@@ -56,7 +56,7 @@ fn read_b64(fname: &str) -> Option<String> {
     let mut file = std::fs::File::open(fname).ok()?;
     let mut data = Vec::new();
     file.read_to_end(&mut data).ok()?;
-    Some(base64::encode(data))
+    Some(general_purpose::STANDARD.encode(data))
 }
 
 lazy_static! {

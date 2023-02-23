@@ -57,7 +57,7 @@ impl Packet for GetEmojiPacket {
         let mut results = schema::emojis::table
             .filter(schema::emojis::uuid.eq(self.uid))
             .limit(1)
-            .load::<Emoji>(&state_lock.conn).unwrap();
+            .load::<Emoji>(&mut state_lock.conn).unwrap();
         if results.len() < 1 {
             json!({"command": "get_emoji", "status": Status::NotFound as i32})
         } else {
@@ -68,7 +68,7 @@ impl Packet for GetEmojiPacket {
 
 impl Packet for ListEmojiPacket {
     fn execute(&self, state_lock: &mut LockedState, _: &mut Peer) -> JsonValue {
-        let results = schema::emojis::table.load::<Emoji>(&state_lock.conn).unwrap();
+        let results = schema::emojis::table.load::<Emoji>(&mut state_lock.conn).unwrap();
         json!({"command": "list_emoji", "status": Status::Ok as i32,
             "data": results.iter().map(|res|
                 json!({"name": res.name.clone(), "uuid": res.uuid})

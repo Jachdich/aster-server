@@ -124,7 +124,7 @@ pub trait Packet {
     fn execute(&self, state_lock: &mut LockedState, peer: &mut Peer) -> JsonValue;
 }
 
-fn send_metadata(state_lock: &LockedState, peer: &Peer) {
+fn send_metadata(state_lock: &mut LockedState, peer: &Peer) {
     let meta = json!([serde_json::to_value(state_lock.get_user(&peer.user)).unwrap()]);
     state_lock.send_to_all(MessageType::Raw(
         json!({"command": "metadata", "data": meta, "status": Status::Ok as i32}),
@@ -170,7 +170,7 @@ impl Packet for NickPacket {
             _ => (),
         }
 
-        send_metadata(&state_lock, peer);
+        send_metadata(state_lock, peer);
         json!({"command": "nick", "status": Status::Ok as i32})
     }
 }
@@ -217,7 +217,7 @@ impl Packet for HistoryPacket {
             .filter(schema::messages::channel_uuid.eq(self.channel))
             .order(schema::messages::rowid.desc())
             .limit(self.num.into())
-            .load::<CookedMessage>(&state_lock.conn)
+            .load::<CookedMessage>(&mut state_lock.conn)
         {
             Ok(mut history) => {
                 history.reverse();
@@ -243,7 +243,7 @@ impl Packet for PfpPacket {
         user.pfp = self.data.to_owned();
         match state_lock.update_user(user) {
             Ok(_) => {
-                send_metadata(&state_lock, peer);
+                send_metadata(state_lock, peer);
                 json!({"command": "pfp", "status": Status::Ok as i32})
             }
             Err(e) => {
@@ -316,7 +316,7 @@ impl Packet for SyncSetServersPacket {
         diesel::delete(
             schema::sync_servers::table.filter(schema::sync_servers::user_uuid.eq(peer.user)),
         )
-        .execute(&state_lock.conn)
+        .execute(&mut state_lock.conn)
         .unwrap();
 
         let mut idx = 0;
@@ -346,7 +346,7 @@ impl Packet for SyncGetServersPacket {
         let servers = schema::sync_servers::table
             .filter(schema::sync_servers::user_uuid.eq(peer.user))
             .order(schema::sync_servers::idx.asc())
-            .load::<SyncServerQuery>(&state_lock.conn);
+            .load::<SyncServerQuery>(&mut state_lock.conn);
 
         match servers {
             Ok(servers) => {
