@@ -14,7 +14,7 @@ pub struct Shared {
 
 impl Shared {
     pub fn new() -> Self {
-        let sqlitedb = SqliteConnection::establish(&CONF.database_file).expect(&format!(
+        let sqlitedb = SqliteConnection::establish(&CONF.database_file).unwrap_or_else(|_| panic!(
             "Fatal(Shared::new) connecting to the database file {}",
             &CONF.database_file
         ));
@@ -28,7 +28,7 @@ impl Shared {
 
     pub fn load(&mut self) {
         let channels = self.get_channels();
-        if channels.len() == 0 {
+        if channels.is_empty() {
             let new_channel = Channel::new("general");
             self.insert_channel(new_channel)
                 .expect("Fatal(Shared::load): couldn't insert channel, broken database?");
@@ -38,7 +38,7 @@ impl Shared {
     pub fn send_to_all(&self, message: MessageType) {
         for peer in self.peers.iter() {
             if let Err(e) = peer.tx.send(message.clone()) {
-                panic!("Fatal(Shared::send_to_all): I think this is unlikely but `peer.tx.send` failed. idk bug me to fix it ig. {:?}", e);
+                println!("Error(Shared::send_to_all): I think this is unlikely but `peer.tx.send` failed. idk bug me to fix it ig. {:?}", e);
             }
         }
     }
@@ -80,7 +80,7 @@ impl Shared {
             .load::<User>(&mut self.conn)
             .expect("User does not exist");
 
-        return results.remove(0);
+        results.remove(0)
     }
 
     //pub fn get_password(&self, user: &i64) ->
@@ -100,7 +100,7 @@ impl Shared {
             .load::<Channel>(&mut self.conn)
             .expect("Channel does not exist");
 
-        return results.remove(0);
+        results.remove(0)
     }
 
     pub fn get_sync_data(&mut self, uuid: &i64) -> Option<SyncData> {
@@ -108,8 +108,8 @@ impl Shared {
             .filter(schema::sync_data::user_uuid.eq(uuid))
             .limit(1)
             .load::<SyncData>(&mut self.conn)
-            .expect(&format!("User '{}' does not have sync data", uuid));
-        if results.len() > 0 {
+            .unwrap_or_else(|_| panic!("User '{}' does not have sync data", uuid));
+        if !results.is_empty() {
             Some(results.remove(0))
         } else {
             None
@@ -122,7 +122,7 @@ impl Shared {
             .limit(1)
             .load::<Channel>(&mut self.conn)?;
 
-        return Ok(results.remove(0));
+        Ok(results.remove(0))
     }
 
     pub fn insert_channel(&mut self, channel: Channel) -> Result<usize, diesel::result::Error> {

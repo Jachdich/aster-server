@@ -38,12 +38,12 @@ pub enum Message {
 
 impl CookedMessageInsertable {
     pub fn new(msg: CookedMessage) -> Self {
-        return Self {
+        Self {
             uuid: msg.uuid,
             content: msg.content,
             author_uuid: msg.author_uuid,
             channel_uuid: msg.channel_uuid,
             date: msg.date,
-        };
+        }
     }
 }

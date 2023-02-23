@@ -165,9 +165,9 @@ impl Packet for NickPacket {
         let mut user = state_lock.get_user(&peer.user);
         user.name = self.nick.to_string();
 
-        match state_lock.update_user(user) {
-            Err(_) => return json!({"command": "nick", "status": Status::InternalError as i32}),
-            _ => (),
+        if let Err(e) = state_lock.update_user(user) {
+            println!("Error(NickPacket): updating user: {}", e);
+            return json!({"command": "nick", "status": Status::InternalError as i32});
         }
 
         send_metadata(state_lock, peer);
@@ -314,16 +314,14 @@ impl Packet for SyncSetServersPacket {
         }
 
         diesel::delete(
-            schema::sync_servers::table.filter(schema::sync_servers::user_uuid.eq(peer.user)),
-        )
-        .execute(&mut state_lock.conn)
-        .unwrap();
+            schema::sync_servers::table.filter(schema::sync_servers::user_uuid.eq(peer.user)))
+            .execute(&mut state_lock.conn)
+            .unwrap();
 
-        let mut idx = 0;
-        for sync_server in &self.servers {
+        for (idx, sync_server) in self.servers.iter().enumerate() {
             let mut server = sync_server.clone();
             server.user_uuid = peer.user;
-            server.idx = idx;
+            server.idx = idx as i32;
             if let Err(e) = state_lock.insert_sync_server(server) {
                 println!(
                     "Warn(SyncSetServersPacket::execute) error setting sync server: {:?}",
@@ -331,7 +329,6 @@ impl Packet for SyncSetServersPacket {
                 );
                 return json!({"command": "sync_get_servers", "status": Status::InternalError as i32});
             }
-            idx += 1;
         }
 
         json!({"command": "sync_set_servers", "status": Status::Ok as i32})
