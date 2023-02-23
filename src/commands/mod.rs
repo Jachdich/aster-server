@@ -117,6 +117,8 @@ enum Packets {
     SyncGetServersPacket,
     #[serde(rename = "leave")]
     LeavePacket,
+    #[serde(rename = "get_user")]
+    GetUserPacket,
 }
 
 #[enum_dispatch(Packets)]

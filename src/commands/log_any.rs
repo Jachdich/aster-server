@@ -26,6 +26,12 @@ impl Packet for GetMetadataPacket {
     }
 }
 
+impl Packet for GetUserPacket {
+    fn execute(&self, state_lock: &mut LockedState, _: &mut Peer) -> JsonValue {
+        let meta = serde_json::to_value(state_lock.get_user(&self.uuid)).unwrap();
+        json!({"command": "get_user", "data": meta, "status": Status::Ok as i32})
+    }
+}
 
 
 impl Packet for GetIconPacket {

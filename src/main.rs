@@ -11,11 +11,8 @@ use tokio::sync::Mutex;
 use tokio_native_tls::TlsStream;
 use tokio_stream::StreamExt;
 use tokio_util::codec::{Framed, LinesCodec};
-<<<<<<< HEAD
 use base64::{Engine as _, engine::general_purpose};
 use lazy_static::lazy_static;
-=======
->>>>>>> 5001ffa92df852e83fa2baa1c210ba47db56c821
 
 use futures::SinkExt;
 use std::error::Error;

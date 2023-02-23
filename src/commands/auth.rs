@@ -9,5 +9,5 @@ pub fn make_hash_b64(passwd: &str) -> String {
         argon2id13::OPSLIMIT_INTERACTIVE,
         argon2id13::MEMLIMIT_INTERACTIVE
     ).expect("Fatal(hash) argon2id13::pwhash failed");
-    base64::engine::general_purpose::STANDARD.encode(&hash.0)
+    base64::engine::general_purpose::STANDARD.encode(hash.0)
 }

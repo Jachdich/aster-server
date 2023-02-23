@@ -66,11 +66,11 @@ impl Shared {
     }
 
     pub fn get_users(&mut self) -> Vec<User> {
-        return schema::users::table.load::<User>(&mut self.conn).unwrap();
+        schema::users::table.load::<User>(&mut self.conn).unwrap()
     }
 
     pub fn get_channels(&mut self) -> Vec<Channel> {
-        return schema::channels::table.load::<Channel>(&mut self.conn).unwrap();
+        schema::channels::table.load::<Channel>(&mut self.conn).unwrap()
     }
 
     pub fn get_user(&mut self, user: &i64) -> User {
