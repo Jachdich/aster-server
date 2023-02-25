@@ -127,10 +127,17 @@ pub trait Packet {
 }
 
 fn send_metadata(state_lock: &mut LockedState, peer: &Peer) {
-    let meta = json!([serde_json::to_value(state_lock.get_user(&peer.user)).unwrap()]);
-    state_lock.send_to_all(MessageType::Raw(
-        json!({"command": "metadata", "data": meta, "status": Status::Ok as i32}),
-    ));
+    
+    match state_lock.get_user(&peer.user) {
+        Ok(Some(peer_meta)) => {
+            let meta = json!([serde_json::to_value(peer_meta).unwrap()]);
+            let result = json!({"command": "metadata", "data": meta, "status": Status::Ok as i32});
+            state_lock.send_to_all(MessageType::Raw(result));
+        },
+        Ok(None) => println!("Warn(send_metadata): Requested peer metadata not found: {}", peer.user),
+        Err(e) => println!("Error(send_metadata): Requested peer metadata returned error: {:?}", e),
+    };
+
 }
 
 pub fn send_online(state_lock: &LockedState) {
@@ -164,16 +171,19 @@ impl Packet for NickPacket {
             return json!({"command": "nick", "status": Status::Forbidden as i32});
         }
 
-        let mut user = state_lock.get_user(&peer.user);
-        user.name = self.nick.to_string();
+///TODO match
+                if let Some(mut user) = state_lock.get_user(&peer.user) {
+            user.name = self.nick.to_string();
 
-        if let Err(e) = state_lock.update_user(user) {
-            println!("Error(NickPacket): updating user: {}", e);
-            return json!({"command": "nick", "status": Status::InternalError as i32});
+            if let Err(e) = state_lock.update_user(user) {
+                println!("Error(NickPacket): updating user: {}", e);
+                return json!({"command": "nick", "status": Status::InternalError as i32});
+            }
+            send_metadata(state_lock, peer);
+            json!({"command": "nick", "status": Status::Ok as i32})
+        } else {
+            json!({"command": "nick", "status": Status::NotFound as i32})
         }
-
-        send_metadata(state_lock, peer);
-        json!({"command": "nick", "status": Status::Ok as i32})
     }
 }
 
@@ -241,17 +251,20 @@ impl Packet for PfpPacket {
         if !peer.logged_in {
             return json!({"command": "pfp", "status": Status::Forbidden as i32});
         }
-        let mut user = state_lock.get_user(&peer.user);
-        user.pfp = self.data.to_owned();
-        match state_lock.update_user(user) {
-            Ok(_) => {
-                send_metadata(state_lock, peer);
-                json!({"command": "pfp", "status": Status::Ok as i32})
+        if let Some(mut user) = state_lock.get_user(&peer.user) {
+            user.pfp = self.data.to_owned();
+            match state_lock.update_user(user) {
+                Ok(_) => {
+                    send_metadata(state_lock, peer);
+                    json!({"command": "pfp", "status": Status::Ok as i32})
+                }
+                Err(e) => {
+                    println!("Warn(PfpPacket::execute) error updating user: {:?}", e);
+                    json!({"command": "pfp", "status": Status::InternalError as i32})
+                }
             }
-            Err(e) => {
-                println!("Warn(PfpPacket::execute) error updating user: {:?}", e);
-                json!({"command": "pfp", "status": Status::InternalError as i32})
-            }
+        } else {
+            json!({"command": "pfp", "status": Status::NotFound as i32})
         }
     }
 }
@@ -263,14 +276,18 @@ impl Packet for SyncSetPacket {
         }
 
         let mut sync_data = match state_lock.get_sync_data(&peer.user) {
-            Some(data) => data,
-            None => {
+            Ok(Some(data)) => data,
+            Ok(None) => {
                 let data = SyncData::new(peer.user);
                 if let Err(e) = state_lock.insert_sync_data(&data) {
-                    println!("Warn(SyncSetPacket) error inserting new sync data: {:?}", e);
-                    return json!({"command": "sync_set", "status": Status::Forbidden as i32});
+                    println!("Error(SyncSetPacket::execute) error inserting new sync data: {:?}", e);
+                    return json!({"command": "sync_set", "status": Status::InternalError as i32});
                 }
                 data
+            },
+            Err(e) => {
+                println!("Error(SetSyncPacket::execute) error getting sync data: {:?}", e);
+                return json!({"command": "set_sync", "status": Status::InternalError as i32});
             }
         };
 
@@ -299,13 +316,18 @@ impl Packet for SyncGetPacket {
         }
 
         let sync_data = state_lock.get_sync_data(&peer.user);
-        if let Some(sync_data) = sync_data {
-            json!({"command": "sync_get", 
+        match sync_data {
+            Ok(Some(sync_data)) => 
+                json!({"command": "sync_get", 
                    "uname": sync_data.uname.as_str(),
                    "pfp": sync_data.pfp.as_str(),
-                   "status": Status::Ok as i32})
-        } else {
-            json!({"command": "sync_get", "status": Status::NotFound as i32})
+                   "status": Status::Ok as i32}),
+            Ok(None) =>
+                json!({"command": "sync_get", "status": Status::NotFound as i32}),
+            Err(e) => {
+                println!("Warn(SyncGetPacket::execute) error getting sync data: {:?}", e);
+                json!({"command": "sync_get", "status": Status::InternalError as i32})
+            }
         }
     }
 }

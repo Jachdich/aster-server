@@ -28,8 +28,17 @@ impl Packet for GetMetadataPacket {
 
 impl Packet for GetUserPacket {
     fn execute(&self, state_lock: &mut LockedState, _: &mut Peer) -> JsonValue {
-        let meta = serde_json::to_value(state_lock.get_user(&self.uuid)).unwrap();
-        json!({"command": "get_user", "data": meta, "status": Status::Ok as i32})
+        match state_lock.get_user(&self.uuid) {
+            Ok(Some(peer_meta)) => {
+                let meta = serde_json::to_value(peer_meta).unwrap();
+                json!({"command": "get_user", "data": meta, "status": Status::Ok as i32})
+            },
+            Ok(None) => json!({"command": "get_user", "status": Status::NotFound as i32}),
+            Err(e) => {
+                println!("Warn(GetUserPacket::execute): Error getting user metadata: {:?}", e);
+                json!({"command": "get_user", "status": Status::InternalError as i32})
+            }
+        }
     }
 }
 

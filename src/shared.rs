@@ -73,14 +73,17 @@ impl Shared {
         schema::channels::table.load::<Channel>(&mut self.conn).unwrap()
     }
 
-    pub fn get_user(&mut self, user: &i64) -> User {
+    pub fn get_user(&mut self, user: &i64) -> Result<Option<User>, diesel::result::Error> {
         let mut results = schema::users::table
             .filter(schema::users::uuid.eq(user))
             .limit(1)
-            .load::<User>(&mut self.conn)
-            .expect("User does not exist");
+            .load::<User>(&mut self.conn)?;
 
-        results.remove(0)
+        if results.len() == 1 {
+            Ok(Some(results.remove(0)))
+        } else {
+            Ok(None)
+        }
     }
 
     //pub fn get_password(&self, user: &i64) ->
@@ -93,36 +96,42 @@ impl Shared {
             .expect("Error appending to history");
     }
 
-    pub fn get_channel(&mut self, channel: &i64) -> Channel {
+    pub fn get_channel(&mut self, channel: &i64) -> Result<Option<Channel>, diesel::result::Error> {
         let mut results = schema::channels::table
             .filter(schema::channels::uuid.eq(channel))
             .limit(1)
-            .load::<Channel>(&mut self.conn)
-            .expect("Channel does not exist");
+            .load::<Channel>(&mut self.conn)?;
 
-        results.remove(0)
-    }
-
-    pub fn get_sync_data(&mut self, uuid: &i64) -> Option<SyncData> {
-        let mut results = schema::sync_data::table
-            .filter(schema::sync_data::user_uuid.eq(uuid))
-            .limit(1)
-            .load::<SyncData>(&mut self.conn)
-            .unwrap_or_else(|_| panic!("User '{}' does not have sync data", uuid));
-        if !results.is_empty() {
-            Some(results.remove(0))
+        if results.len() == 1 {
+            Ok(Some(results.remove(0)))
         } else {
-            None
+            Ok(None)
         }
     }
 
-    pub fn get_channel_by_name(&mut self, channel: &String) -> Result<Channel, diesel::result::Error> {
+    pub fn get_sync_data(&mut self, uuid: &i64) -> Result<Option<SyncData>, diesel::result::Error> {
+        let mut results = schema::sync_data::table
+            .filter(schema::sync_data::user_uuid.eq(uuid))
+            .limit(1)
+            .load::<SyncData>(&mut self.conn)?;
+        if !results.is_empty() {
+            Ok(Some(results.remove(0)))
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub fn get_channel_by_name(&mut self, channel: &String) -> Result<Option<Channel>, diesel::result::Error> {
         let mut results = schema::channels::table
             .filter(schema::channels::name.eq(channel))
             .limit(1)
             .load::<Channel>(&mut self.conn)?;
 
-        Ok(results.remove(0))
+        if results.len() == 1 {
+            Ok(Some(results.remove(0)))
+        } else {
+            Ok(None)
+        }
     }
 
     pub fn insert_channel(&mut self, channel: Channel) -> Result<usize, diesel::result::Error> {
