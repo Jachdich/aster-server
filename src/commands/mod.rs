@@ -171,18 +171,22 @@ impl Packet for NickPacket {
             return json!({"command": "nick", "status": Status::Forbidden as i32});
         }
 
-///TODO match
-                if let Some(mut user) = state_lock.get_user(&peer.user) {
-            user.name = self.nick.to_string();
+        match state_lock.get_user(&peer.user) {
+            Ok(Some(mut user)) => {
+                user.name = self.nick.to_string();
 
-            if let Err(e) = state_lock.update_user(user) {
-                println!("Error(NickPacket): updating user: {}", e);
-                return json!({"command": "nick", "status": Status::InternalError as i32});
+                if let Err(e) = state_lock.update_user(user) {
+                    println!("Error(NickPacket): updating user: {}", e);
+                    return json!({"command": "nick", "status": Status::InternalError as i32});
+                }
+                send_metadata(state_lock, peer);
+                json!({"command": "nick", "status": Status::Ok as i32})
+            },
+            Ok(None) => json!({"command": "nick", "status": Status::NotFound as i32}),
+            Err(e) => {
+                println!("Error(NickPacket::execute): Error getting user: {:?}", e);
+                json!({"command": "nick", "status": Status::InternalError as i32})
             }
-            send_metadata(state_lock, peer);
-            json!({"command": "nick", "status": Status::Ok as i32})
-        } else {
-            json!({"command": "nick", "status": Status::NotFound as i32})
         }
     }
 }
@@ -237,7 +241,7 @@ impl Packet for HistoryPacket {
             }
             Err(e) => {
                 println!(
-                    "Warn(HistoryPacket::execute) error loading database: {:?}",
+                    "Error(HistoryPacket::execute) error loading database: {:?}",
                     e
                 );
                 json!({"command": "history", "status": Status::InternalError as i32})
@@ -251,20 +255,22 @@ impl Packet for PfpPacket {
         if !peer.logged_in {
             return json!({"command": "pfp", "status": Status::Forbidden as i32});
         }
-        if let Some(mut user) = state_lock.get_user(&peer.user) {
-            user.pfp = self.data.to_owned();
-            match state_lock.update_user(user) {
-                Ok(_) => {
-                    send_metadata(state_lock, peer);
-                    json!({"command": "pfp", "status": Status::Ok as i32})
+        match state_lock.get_user(&peer.user) {
+            Ok(Some(mut user)) => {
+                user.pfp = self.data.to_string();
+
+                if let Err(e) = state_lock.update_user(user) {
+                    println!("Error(pfpPacket): updating user: {}", e);
+                    return json!({"command": "pfp", "status": Status::InternalError as i32});
                 }
-                Err(e) => {
-                    println!("Warn(PfpPacket::execute) error updating user: {:?}", e);
-                    json!({"command": "pfp", "status": Status::InternalError as i32})
-                }
+                send_metadata(state_lock, peer);
+                json!({"command": "pfp", "status": Status::Ok as i32})
+            },
+            Ok(None) => json!({"command": "pfp", "status": Status::NotFound as i32}),
+            Err(e) => {
+                println!("Error(PfpPacket::execute): Error getting user: {:?}", e);
+                json!({"command": "pfp", "status": Status::InternalError as i32})
             }
-        } else {
-            json!({"command": "pfp", "status": Status::NotFound as i32})
         }
     }
 }
@@ -408,7 +414,7 @@ pub async fn process_command(
             json!({"command": "unknown", "status": Status::BadRequest as i32})
         }
     };
-
+    println!("{}", response.to_string());
     peer.lines.send(response.to_string()).await?;
     /*
             //"/createchannel" => {
