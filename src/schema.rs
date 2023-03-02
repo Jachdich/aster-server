@@ -31,7 +31,6 @@ table! {
         author_uuid -> BigInt,
         channel_uuid -> BigInt,
         date -> Integer,
-        rowid -> BigInt,
     }
 }
 

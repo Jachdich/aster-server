@@ -1,4 +1,4 @@
-#![deny(warnings)]
+// #![deny(warnings)]
 
 extern crate tokio;
 extern crate lazy_static;
@@ -8,6 +8,7 @@ use serde::Deserialize;
 use serde_json::json;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Mutex;
+use tokio::io::AsyncReadExt;
 use tokio_native_tls::TlsStream;
 use tokio_stream::StreamExt;
 use tokio_util::codec::{Framed, LinesCodec};
@@ -94,9 +95,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
         let mut state = state.lock().await;
         state.load();
     }
-    if false {
-        start_voice_server(Arc::clone(&state));
-    }
     let addr = format!("{}:{}", &CONF.addr, CONF.port);
 
     let listener = TcpListener::bind(&addr).await?;
@@ -126,83 +124,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
     }
 }
 
-fn start_voice_server(state: Arc<Mutex<Shared>>) {
-    tokio::spawn(async move {
-        loop {
-            if let Err(e) = listen_for_voice(&state).await {
-                println!("Voice server error: {:?}", e);
-            }
-        }
-    });
-}
-
-async fn listen_for_voice<'a>(state: &Arc<Mutex<Shared>>) -> Result<(), Box<dyn Error>> {
-    let addr = format!("{}:{}", &CONF.addr, CONF.voice_port);
-    println!("Starting voice server on {}", addr);
-
-    let listener = TcpListener::bind(&addr).await?;
-    let (stream, addr) = listener.accept().await?;
-    println!("Got voice server connection at {}", addr);
-    let mut lines = Framed::new(stream, LinesCodec::new());
-
-    let mut joined: Vec<i64> = Vec::new();
-
-    while let Some(Ok(result)) = lines.next().await {
-        let parsed: Result<JsonValue, serde_json::Error> = serde_json::from_str(&result);
-        match parsed {
-            Ok(parsed) => {
-                //let mut peer = state
-                if parsed["command"] == "join" {
-                    joined.push(parsed["uuid"].as_i64().unwrap());
-                    {
-                        let state = state.lock().await;
-                        for peer in &state.peers {
-                            if joined.contains(&peer.uuid) {
-                                peer.tx.send(MessageType::Internal(json!({"command": "someone joined voice", "uuid": parsed["uuid"].as_i64().unwrap() })))?;
-                            }
-                        }
-                    }
-                }
-                if parsed["command"] == "leave" {
-                    for (idx, peer) in joined.iter().enumerate() {
-                        if *peer == parsed["uuid"].as_i64().unwrap() {
-                            joined.remove(idx);
-                            break;
-                        }
-                    }
-                    {
-                        let state = state.lock().await;
-                        for peer in &state.peers {
-                            if joined.contains(&peer.uuid) {
-                                peer.tx.send(MessageType::Internal(json!({"command": "someone left voice", "uuid": parsed["uuid"].as_i64().unwrap() })))?;
-                            }
-                        }
-                    }
-                }
-            }
-            Err(e) => {
-                eprintln!("Couldnt parse \"{}\" as json! ({:?})", result, e);
-            }
-        }
-    }
-    println!("Voice server sent nothing lol");
-    Ok(())
-}
-
-async fn process_internal_command(
-    msg: &JsonValue,
-    _state: Arc<Mutex<Shared>>,
-    _peer: &mut Peer,
-) -> Result<(), Box<dyn Error>> {
-    println!("internal command: {:?}", msg);
-    Ok(())
-}
-
 async fn process(
     state: Arc<Mutex<Shared>>,
-    stream: TlsStream<TcpStream>,
+    mut stream: TlsStream<TcpStream>,
     addr: SocketAddr,
 ) -> Result<(), Box<dyn Error>> {
+    // let ws_stream = tokio_tungstenite::accept_async(stream).await?;
+       
     let lines = Framed::new(stream, LinesCodec::new());
     let mut peer = Peer::new(lines, addr).await?;
     {
@@ -213,28 +141,16 @@ async fn process(
     peer.lines.send(json!({"command": "API_version", "rel": API_VERSION_RELEASE, "maj": API_VERSION_MAJOR, "min": API_VERSION_MINOR, "status": 200}).to_string()).await?;
     //TODO handshake protocol
 
-    while let Some(result) = peer.next().await {
-        match result {
-            Ok(Message::Broadcast(msg)) => {
-                commands::process_command(&msg, state.clone(), &mut peer).await?;
-            }
-
-            Ok(Message::Received(msg)) => match msg {
-                MessageType::Cooked(msg) => {
-                    let mut msg_json = serde_json::to_value(&msg)?;
-                    msg_json["command"] = "content".into();
-                    msg_json["status"] = 200.into();
-                    peer.lines.send(&msg_json.to_string()).await?;
-                }
-                MessageType::Raw(msg) => peer.lines.send(msg.to_string()).await?,
-                MessageType::Internal(msg) => {
-                    process_internal_command(&msg, state.clone(), &mut peer).await?
-                }
+    loop {
+        tokio::select! {
+            result = peer.lines.next() => match result {
+                Some(Ok(msg)) =>
+                    commands::process_command(&msg, state.clone(), &mut peer).await?,
+                Some(Err(e)) => println!("Error receiving data: {}", e),
+                None => break,
             },
 
-            Err(e) => {
-                println!("Error lmao u figure it out: {}", e);
-            }
+            Some(msg) = peer.rx.recv() => peer.lines.send(msg.to_string()).await?,
         }
     }
 

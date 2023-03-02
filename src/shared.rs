@@ -35,7 +35,7 @@ impl Shared {
         }
     }
 
-    pub fn send_to_all(&self, message: MessageType) {
+    pub fn send_to_all(&self, message: serde_json::Value) {
         for peer in self.peers.iter() {
             if let Err(e) = peer.tx.send(message.clone()) {
                 println!("Error(Shared::send_to_all): I think this is unlikely but `peer.tx.send` failed. idk bug me to fix it ig. {:?}", e);
@@ -88,10 +88,9 @@ impl Shared {
 
     //pub fn get_password(&self, user: &i64) ->
 
-    pub fn add_to_history(&mut self, msg: CookedMessage) {
-        let new_msg = CookedMessageInsertable::new(msg);
+    pub fn add_to_history(&mut self, msg: &Message) {
         let _ = diesel::insert_into(schema::messages::table)
-            .values(&new_msg)
+            .values(msg)
             .execute(&mut self.conn)
             .expect("Error appending to history");
     }

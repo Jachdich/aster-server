@@ -9,8 +9,8 @@ use log_any::*;
 use log_out::*;
 
 use crate::helper::{gen_uuid, JsonValue, LockedState};
-use crate::message::{CookedMessage, MessageType};
 use crate::models::{SyncData, SyncServer, SyncServerQuery};
+use crate::message::Message;
 use crate::peer::Peer;
 use crate::schema;
 use crate::shared::Shared;
@@ -132,7 +132,7 @@ fn send_metadata(state_lock: &mut LockedState, peer: &Peer) {
         Ok(Some(peer_meta)) => {
             let meta = json!([serde_json::to_value(peer_meta).unwrap()]);
             let result = json!({"command": "metadata", "data": meta, "status": Status::Ok as i32});
-            state_lock.send_to_all(MessageType::Raw(result));
+            state_lock.send_to_all(result);
         },
         Ok(None) => println!("Warn(send_metadata): Requested peer metadata not found: {}", peer.user),
         Err(e) => println!("Error(send_metadata): Requested peer metadata returned error: {:?}", e),
@@ -150,7 +150,7 @@ pub fn send_online(state_lock: &LockedState) {
         "data": res,
         "status": Status::Ok as i32,
     });
-    state_lock.send_to_all(MessageType::Raw(final_json));
+    state_lock.send_to_all(final_json);
 }
 
 impl Packet for LeavePacket {
@@ -210,17 +210,26 @@ impl Packet for SendPacket {
         if !peer.logged_in {
             return json!({"command": "send", "status": Status::Forbidden as i32});
         }
-        let msg = CookedMessage {
+        let msg = Message {
             uuid: gen_uuid(),
             content: self.content.to_owned(),
             author_uuid: peer.user,
             channel_uuid: self.channel,
             date: chrono::offset::Utc::now().timestamp() as i32,
-            rowid: 0,
         };
-        state_lock.add_to_history(msg.clone());
-        state_lock.send_to_all(MessageType::Cooked(msg));
-        json!({"command": "send", "status": Status::Ok as i32})
+        state_lock.add_to_history(&msg);
+        match serde_json::to_value(&msg) {
+            Ok(mut msg_json) => {
+                msg_json["command"] = "content".into();
+                msg_json["status"] = (Status::Ok as i32).into();
+                state_lock.send_to_all(msg_json);
+                json!({"command": "send", "status": Status::Ok as i32})
+            },
+            Err(e) => {
+                println!("Error(SendPacket::execute): Converting message to json failed: {}", e);
+                json!({"command": "send", "status": Status::InternalError as i32})
+            }
+        }
     }
 }
 
@@ -231,9 +240,9 @@ impl Packet for HistoryPacket {
         }
         match schema::messages::table
             .filter(schema::messages::channel_uuid.eq(self.channel))
-            .order(schema::messages::rowid.desc())
+            .order(schema::messages::date.desc())
             .limit(self.num.into())
-            .load::<CookedMessage>(&mut state_lock.conn)
+            .load::<Message>(&mut state_lock.conn)
         {
             Ok(mut history) => {
                 history.reverse();
