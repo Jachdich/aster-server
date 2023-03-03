@@ -8,7 +8,7 @@ use serde::Deserialize;
 use serde_json::json;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Mutex;
-use tokio::io::AsyncReadExt;
+use tokio::io::{AsyncRead, AsyncWrite, AsyncReadExt, ReadBuf};
 use tokio_native_tls::TlsStream;
 use tokio_stream::StreamExt;
 use tokio_util::codec::{Framed, LinesCodec};
@@ -20,6 +20,9 @@ use std::error::Error;
 use std::io::Read;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::pin::Pin;
+use std::task::Context;
+use std::task::Poll;
 
 pub mod commands;
 pub mod helper;
@@ -31,15 +34,13 @@ pub mod schema;
 pub mod shared;
 
 use crate::commands::send_online;
-use crate::helper::JsonValue;
 use crate::helper::NO_UID;
-use message::*;
 use peer::Peer;
 use peer::Pontoon;
 use shared::Shared;
 
 const API_VERSION_RELEASE: u8 = 0;
-const API_VERSION_MAJOR: u8 = 2;
+const API_VERSION_MAJOR: u8 = 3;
 const API_VERSION_MINOR: u8 = 0;
 
 #[derive(Deserialize)]
@@ -124,33 +125,119 @@ async fn main() -> Result<(), Box<dyn Error>> {
     }
 }
 
+struct ShittyStream {
+    c: char,
+    s: TlsStream<TcpStream>,
+}
+
+impl AsyncRead for ShittyStream {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>
+    ) -> Poll<Result<(), std::io::Error>> {
+        if self.c != '\0' {
+            buf.put_slice(&[self.c as u8]);
+            self.c = '\0';
+            Poll::Ready(Ok(()))
+        } else {
+            Pin::new(&mut self.s).poll_read(cx, buf)
+        }
+    }
+}
+
+impl AsyncWrite for ShittyStream {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8]
+    ) -> Poll<Result<usize, std::io::Error>> {
+        Pin::new(&mut self.s).poll_write(cx, buf)
+    }
+
+    fn poll_flush(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>
+    ) -> Poll<Result<(), std::io::Error>> {
+        Pin::new(&mut self.s).poll_flush(cx)
+    }
+
+    fn poll_shutdown(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>
+    ) -> Poll<Result<(), std::io::Error>> {
+        Pin::new(&mut self.s).poll_shutdown(cx)
+    }
+}
+
 async fn process(
     state: Arc<Mutex<Shared>>,
     mut stream: TlsStream<TcpStream>,
     addr: SocketAddr,
 ) -> Result<(), Box<dyn Error>> {
-    // let ws_stream = tokio_tungstenite::accept_async(stream).await?;
-       
-    let lines = Framed::new(stream, LinesCodec::new());
-    let mut peer = Peer::new(lines, addr).await?;
+
+    use tokio_tungstenite::tungstenite::Message;
+
+    let mut peer = Peer::new(addr).await?;
     {
         let mut state = state.lock().await;
         state.peers.push(Pontoon::from_peer(&peer));
     }
-
-    peer.lines.send(json!({"command": "API_version", "rel": API_VERSION_RELEASE, "maj": API_VERSION_MAJOR, "min": API_VERSION_MINOR, "status": 200}).to_string()).await?;
+    
+    peer.tx.send(json!({"command": "API_version", "rel": API_VERSION_RELEASE, "maj": API_VERSION_MAJOR, "min": API_VERSION_MINOR, "status": 200}))?;
     //TODO handshake protocol
 
-    loop {
-        tokio::select! {
-            result = peer.lines.next() => match result {
-                Some(Ok(msg)) =>
-                    commands::process_command(&msg, state.clone(), &mut peer).await?,
-                Some(Err(e)) => println!("Error receiving data: {}", e),
-                None => break,
-            },
+    //identification of whether a raw socket (json protocol) or websocket has connected
+    let mut buf = vec![0; 1];
+    let n = stream.read(&mut buf).await?;
+    if n == 0 {
+        return Ok(()) // must have disconnected or something
+    }
+    let first_char = char::from_u32(buf[0] as u32).unwrap();
 
-            Some(msg) = peer.rx.recv() => peer.lines.send(msg.to_string()).await?,
+    // hang on hang on I can explain
+    // so basically i have to read the first character of the stream
+    // to deterime whether it is a websocket connection or a raw socket connection
+    // however, TlsStream doesn't implement `.peek()`. Hmhp. So I had to do this
+    // attrosity: ShittyStream basically just wraps the stream, implementing
+    // AsyncRead and AsyncWrite, but the very first character that gets read
+    // is the one that we read from the original stream in the first place.
+    // This is a cry for help, please I don't know how to go on
+    let stream_with_first_char = ShittyStream { c: first_char, s: stream };
+    if first_char == '{' {
+        //JSON shit
+        let mut lines = Framed::new(stream_with_first_char, LinesCodec::new());
+
+        loop {
+            tokio::select! {
+                result = lines.next() => match result {
+                    Some(Ok(msg)) =>
+                        commands::process_command(&msg, state.clone(), &mut peer).await?,
+                    Some(Err(e)) => println!("Error receiving data: {}", e),
+                    None => break,
+                },
+
+                Some(msg) = peer.rx.recv() => lines.send(msg.to_string()).await?,
+            }
+        }
+    } else {
+        //?? assume it's websocket
+        
+        let mut lines = tokio_tungstenite::accept_async(stream_with_first_char).await?;
+        loop {
+            tokio::select! {
+                result = lines.next() => match result {
+                    Some(Ok(msg)) => match msg {
+                            Message::Text(msg) =>
+                                commands::process_command(&msg, state.clone(), &mut peer).await?,
+                            _ => (),
+                        }
+                    Some(Err(e)) => println!("Error receiving data: {}", e),
+                    None => break,
+                },
+
+                Some(msg) = peer.rx.recv() => lines.send(Message::Text(msg.to_string())).await?,
+            }
         }
     }
 

@@ -1,30 +1,26 @@
 [package]
 name = "server"
-version = "0.0.1"
+version = "1.0.0"
 authors = ["Jachdich <jamesedkitching@gmail.com>"]
 edition = "2018"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-tokio = { version = "1.0.0", features = ["full", "tracing"] }
+tokio = { version = "1.0.0", features = ["rt-multi-thread", "macros"] }
 tokio-util = { version = "0.6.3", features = ["full"] }
 tokio-stream = { version = "0.1" }
 tokio-tungstenite = "*"
 tokio-native-tls = "*"
 native-tls = "0.2.11"
 
-async-stream = "0.3.3"
-tracing = "0.1"
-tracing-subscriber = { version = "0.2.7", default-features = false, features = ["fmt", "ansi", "env-filter", "chrono", "tracing-log"] }
+# tracing = "0.1"
+# tracing-subscriber = { version = "0.2.7", default-features = false, features = ["fmt", "ansi", "env-filter", "chrono", "tracing-log"] }
 bytes = "1.0.0"
 futures = { version = "0.3.0", features = ["thread-pool"]}
 rand = "*"
 base64 = "*"
 diesel = { version = "*", features = ["sqlite", "numeric"]}
-#num = "*"
-#num-traits = "*"
-#num-derive = "*"
 chrono = "*"
 lazy_static = "*"
 sodiumoxide = "*"

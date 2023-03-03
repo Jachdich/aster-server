@@ -10,7 +10,6 @@ use crate::message::*;
 use crate::helper::NO_UID;
 
 pub struct Peer {
-    pub lines: Framed<TlsStream<TcpStream>, LinesCodec>,
     pub rx: mpsc::UnboundedReceiver<serde_json::Value>,
     pub tx: mpsc::UnboundedSender<serde_json::Value>,
     pub user: i64,
@@ -37,7 +36,7 @@ impl Pontoon {
 }
 
 impl Peer {
-    pub async fn new(lines: Framed<TlsStream<TcpStream>, LinesCodec>, addr: SocketAddr) -> std::io::Result<Peer> {
+    pub async fn new(addr: SocketAddr) -> std::io::Result<Peer> {
         let (tx, mut rx) = mpsc::unbounded_channel::<serde_json::Value>();
 
         // let rx = Box::pin(async_stream::stream! {
@@ -47,7 +46,7 @@ impl Peer {
         // });
 
         Ok(Peer {
-            lines, rx, tx, addr,
+            rx, tx, addr,
             user: NO_UID,
             logged_in: false
         })

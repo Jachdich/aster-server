@@ -423,8 +423,7 @@ pub async fn process_command(
             json!({"command": "unknown", "status": Status::BadRequest as i32})
         }
     };
-    println!("{}", response.to_string());
-    peer.lines.send(response.to_string()).await?;
+    peer.tx.send(response)?;
     /*
             //"/createchannel" => {
             //
