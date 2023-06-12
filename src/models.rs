@@ -1,7 +1,7 @@
 use crate::schema::*;
+use diesel::{Insertable, Queryable};
 use rand::prelude::*;
 use serde::{Deserialize, Serialize};
-use diesel::{Queryable, Insertable};
 
 #[derive(Queryable, Insertable, Clone, Serialize)]
 #[diesel(table_name=channels)]
@@ -38,9 +38,10 @@ pub struct UserGroupConnection {
     pub group_uuid: i64,
 }
 
-#[derive(Queryable, Insertable, Clone)]
+#[derive(Queryable, Insertable, Clone, Serialize)]
 #[diesel(table_name=sync_data)]
 pub struct SyncData {
+    #[serde(skip)]
     pub user_uuid: i64,
     pub uname: String,
     pub pfp: String,
@@ -53,7 +54,7 @@ pub struct SyncServer {
     pub server_uuid: i64,
     pub ip: String,
     pub port: i32,
-    pub pfp:  Option<String>,
+    pub pfp: Option<String>,
     pub name: Option<String>,
     pub idx: i32,
 }
@@ -64,7 +65,7 @@ pub struct SyncServerQuery {
     pub server_uuid: i64,
     pub ip: String,
     pub port: i32,
-    pub pfp:  Option<String>,
+    pub pfp: Option<String>,
     pub name: Option<String>,
     pub idx: i32,
     pub rowid: i32,
@@ -84,9 +85,7 @@ fn gen_uuid() -> i64 {
 
 impl Emoji {
     pub fn new(uuid: i64, name: String, data: String) -> Self {
-        Self {
-            uuid, name, data
-        }
+        Self { uuid, name, data }
     }
 }
 

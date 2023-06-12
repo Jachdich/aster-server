@@ -1,23 +1,28 @@
 use crate::message::*;
 use crate::models::*;
-use crate::peer::Pontoon;
 use crate::schema;
 use crate::CONF;
 use diesel::prelude::*;
 use std::collections::HashMap;
+use tokio::sync::mpsc;
 
 pub struct Shared {
     pub online: HashMap<i64, u32>,
     pub conn: SqliteConnection,
-    pub peers: Vec<Pontoon>,
+    pub peers: Vec<(
+        mpsc::UnboundedSender<serde_json::Value>,
+        std::net::SocketAddr,
+    )>,
 }
 
 impl Shared {
     pub fn new() -> Self {
-        let sqlitedb = SqliteConnection::establish(&CONF.database_file).unwrap_or_else(|_| panic!(
-            "Fatal(Shared::new) connecting to the database file {}",
-            &CONF.database_file
-        ));
+        let sqlitedb = SqliteConnection::establish(&CONF.database_file).unwrap_or_else(|_| {
+            panic!(
+                "Fatal(Shared::new) connecting to the database file {}",
+                &CONF.database_file
+            )
+        });
 
         Shared {
             online: HashMap::new(),
@@ -27,7 +32,7 @@ impl Shared {
     }
 
     pub fn load(&mut self) {
-        let channels = self.get_channels();
+        let channels = self.get_channels().unwrap(); //TODO get rid of this unwrap
         if channels.is_empty() {
             let new_channel = Channel::new("general");
             self.insert_channel(new_channel)
@@ -35,12 +40,17 @@ impl Shared {
         }
     }
 
-    pub fn send_to_all(&self, message: serde_json::Value) {
-        for peer in self.peers.iter() {
-            if let Err(e) = peer.tx.send(message.clone()) {
-                println!("Error(Shared::send_to_all): I think this is unlikely but `peer.tx.send` failed. idk bug me to fix it ig. {:?}", e);
-            }
+    pub fn send_to_all(
+        &self,
+        message: serde_json::Value,
+    ) -> Result<(), tokio::sync::mpsc::error::SendError<serde_json::Value>> {
+        for (tx, _) in self.peers.iter() {
+            // if let Err(e) = tx.send(message.clone()) {
+            //     println!("Error(Shared::send_to_all): I think this is unlikely but `peer.tx.send` failed. idk bug me to fix it ig. {:?}", e);
+            // }
+            tx.send(message.clone())?;
         }
+        Ok(())
     }
 
     pub fn inc_online(&mut self, user: i64) {
@@ -56,21 +66,20 @@ impl Shared {
     //
     // }
 
-    pub fn get_user_by_name(&mut self, name: &str) -> Option<User> {
+    pub fn get_user_by_name(&mut self, name: &str) -> Result<Option<User>, diesel::result::Error> {
         let mut query_res = schema::users::table
             .filter(schema::users::name.eq(name))
             .limit(1)
-            .load::<User>(&mut self.conn)
-            .ok()?;
-        query_res.pop()
+            .load::<User>(&mut self.conn)?;
+        Ok(query_res.pop())
     }
 
-    pub fn get_users(&mut self) -> Vec<User> {
-        schema::users::table.load::<User>(&mut self.conn).unwrap()
+    pub fn get_users(&mut self) -> Result<Vec<User>, diesel::result::Error> {
+        schema::users::table.load::<User>(&mut self.conn)
     }
 
-    pub fn get_channels(&mut self) -> Vec<Channel> {
-        schema::channels::table.load::<Channel>(&mut self.conn).unwrap()
+    pub fn get_channels(&mut self) -> Result<Vec<Channel>, diesel::result::Error> {
+        schema::channels::table.load::<Channel>(&mut self.conn)
     }
 
     pub fn get_user(&mut self, user: &i64) -> Result<Option<User>, diesel::result::Error> {
@@ -88,11 +97,11 @@ impl Shared {
 
     //pub fn get_password(&self, user: &i64) ->
 
-    pub fn add_to_history(&mut self, msg: &Message) {
+    pub fn add_to_history(&mut self, msg: &Message) -> Result<(), diesel::result::Error> {
         let _ = diesel::insert_into(schema::messages::table)
             .values(msg)
-            .execute(&mut self.conn)
-            .expect("Error appending to history");
+            .execute(&mut self.conn)?;
+        Ok(())
     }
 
     pub fn get_channel(&mut self, channel: &i64) -> Result<Option<Channel>, diesel::result::Error> {
@@ -120,7 +129,10 @@ impl Shared {
         }
     }
 
-    pub fn get_channel_by_name(&mut self, channel: &String) -> Result<Option<Channel>, diesel::result::Error> {
+    pub fn get_channel_by_name(
+        &mut self,
+        channel: &String,
+    ) -> Result<Option<Channel>, diesel::result::Error> {
         let mut results = schema::channels::table
             .filter(schema::channels::name.eq(channel))
             .limit(1)

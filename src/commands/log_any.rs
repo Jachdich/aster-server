@@ -1,93 +1,119 @@
-use crate::schema;
+use crate::commands::{
+    CmdError, Request,
+    Response::{self, *},
+    Status,
+};
+use crate::helper::LockedState;
 use crate::models::Emoji;
-use crate::helper::{LockedState, JsonValue};
-use crate::commands::{Status, Packet};
+use crate::schema;
 use crate::Peer;
 use crate::CONF;
-use serde_json::json;
 use diesel::prelude::*;
 use serde::Deserialize;
 
-#[derive(Deserialize)] pub struct GetIconPacket;
-#[derive(Deserialize)] pub struct GetNamePacket;
-#[derive(Deserialize)] pub struct GetMetadataPacket;
-#[derive(Deserialize)] pub struct ListChannelsPacket;
-#[derive(Deserialize)] pub struct ListEmojiPacket;
-#[derive(Deserialize)] pub struct GetEmojiPacket { pub uid: i64 }
-#[derive(Deserialize)] pub struct GetUserPacket { pub uuid: i64 }
+#[derive(Deserialize)]
+pub struct GetIconRequest;
+#[derive(Deserialize)]
+pub struct GetNameRequest;
+#[derive(Deserialize)]
+pub struct GetMetadataRequest;
+#[derive(Deserialize)]
+pub struct ListChannelsRequest;
+#[derive(Deserialize)]
+pub struct ListEmojiRequest;
+#[derive(Deserialize)]
+pub struct LeaveRequest;
+#[derive(Deserialize)]
+pub struct PingRequest;
 
-impl Packet for GetMetadataPacket {
-    fn execute(&self, state_lock: &mut LockedState, _: &mut Peer) -> JsonValue {
-        let mut meta: Vec<JsonValue> = Vec::new();
-        for v in &state_lock.get_users() {
-            meta.push(serde_json::to_value(v).unwrap());
+#[derive(Deserialize)]
+pub struct GetEmojiRequest {
+    pub uid: i64,
+}
+#[derive(Deserialize)]
+pub struct GetUserRequest {
+    pub uuid: i64,
+}
+
+impl Request for GetMetadataRequest {
+    fn execute(&self, state_lock: &mut LockedState, _: &mut Peer) -> Result<Response, CmdError> {
+        Ok(Response::GetMetadataResponse {
+            data: state_lock.get_users()?,
+        })
+    }
+}
+
+impl Request for GetUserRequest {
+    fn execute(&self, state_lock: &mut LockedState, _: &mut Peer) -> Result<Response, CmdError> {
+        match state_lock.get_user(&self.uuid)? {
+            Some(peer_meta) => Ok(GetUserResponse { data: peer_meta }),
+            None => Ok(GenericResponse(Status::NotFound)),
         }
-        json!({"command": "metadata", "data": meta, "status": Status::Ok as i32})
     }
 }
 
-impl Packet for GetUserPacket {
-    fn execute(&self, state_lock: &mut LockedState, _: &mut Peer) -> JsonValue {
-        match state_lock.get_user(&self.uuid) {
-            Ok(Some(peer_meta)) => {
-                let meta = serde_json::to_value(peer_meta).unwrap();
-                json!({"command": "get_user", "data": meta, "status": Status::Ok as i32})
-            },
-            Ok(None) => json!({"command": "get_user", "status": Status::NotFound as i32}),
-            Err(e) => {
-                println!("Warn(GetUserPacket::execute): Error getting user metadata: {:?}", e);
-                json!({"command": "get_user", "status": Status::InternalError as i32})
-            }
-        }
+impl Request for GetIconRequest {
+    fn execute(&self, _: &mut LockedState, _: &mut Peer) -> Result<Response, CmdError> {
+        Ok(GetIconResponse {
+            data: CONF.icon.to_owned(),
+        })
     }
 }
 
-
-impl Packet for GetIconPacket {
-    fn execute(&self, _: &mut LockedState, _: &mut Peer) -> JsonValue {
-        json!({"command": "get_icon", "data": CONF.icon.to_owned(), "status": Status::Ok as i32})
+impl Request for GetNameRequest {
+    fn execute(&self, _: &mut LockedState, _: &mut Peer) -> Result<Response, CmdError> {
+        Ok(GetNameResponse {
+            data: CONF.icon.to_owned(),
+        })
     }
 }
 
-impl Packet for GetNamePacket {
-    fn execute(&self, _: &mut LockedState, _: &mut Peer) -> JsonValue {
-        json!({"command": "get_name", "data": CONF.name.to_owned(), "status": Status::Ok as i32})
+impl Request for ListChannelsRequest {
+    fn execute(&self, state_lock: &mut LockedState, _: &mut Peer) -> Result<Response, CmdError> {
+        let channels = state_lock.get_channels()?;
+        Ok(GetChannelsResponse { data: channels })
     }
 }
 
-impl Packet for ListChannelsPacket {
-    fn execute(&self, state_lock: &mut LockedState, _: &mut Peer) -> JsonValue {
-        let mut res: Vec<JsonValue> = Vec::new();
-        let channels = state_lock.get_channels();
-        for channel in channels {
-            res.push(serde_json::to_value(channel).unwrap());
-        }
-        
-        json!({"command": "list_channels", "data": res, "status": Status::Ok as i32})
-    }
-}
-
-impl Packet for GetEmojiPacket {
-    fn execute(&self, state_lock: &mut LockedState, _: &mut Peer) -> JsonValue {
+impl Request for GetEmojiRequest {
+    fn execute(&self, state_lock: &mut LockedState, _: &mut Peer) -> Result<Response, CmdError> {
         let mut results = schema::emojis::table
             .filter(schema::emojis::uuid.eq(self.uid))
             .limit(1)
-            .load::<Emoji>(&mut state_lock.conn).unwrap();
+            .load::<Emoji>(&mut state_lock.conn)
+            .unwrap();
         if results.is_empty() {
-            json!({"command": "get_emoji", "status": Status::NotFound as i32})
+            Ok(GenericResponse(Status::NotFound))
         } else {
-            json!({"command": "get_emoji", "status": Status::Ok as i32, "data": serde_json::to_value(results.remove(0)).unwrap()})
+            Ok(GetEmojiResponse {
+                data: results.remove(0),
+            })
         }
     }
 }
 
-impl Packet for ListEmojiPacket {
-    fn execute(&self, state_lock: &mut LockedState, _: &mut Peer) -> JsonValue {
-        let results = schema::emojis::table.load::<Emoji>(&mut state_lock.conn).unwrap();
-        json!({"command": "list_emoji", "status": Status::Ok as i32,
-            "data": results.iter().map(|res|
-                json!({"name": res.name.clone(), "uuid": res.uuid})
-            ).collect::<Vec<JsonValue>>()
+impl Request for ListEmojiRequest {
+    fn execute(&self, state_lock: &mut LockedState, _: &mut Peer) -> Result<Response, CmdError> {
+        let results = schema::emojis::table
+            .load::<Emoji>(&mut state_lock.conn)
+            .unwrap();
+        Ok(ListEmojiResponse {
+            data: results
+                .iter()
+                .map(|res| (res.name.clone(), res.uuid))
+                .collect::<Vec<(String, i64)>>(),
         })
+    }
+}
+
+impl Request for LeaveRequest {
+    fn execute(&self, _: &mut LockedState, _: &mut Peer) -> Result<Response, CmdError> {
+        Ok(GenericResponse(Status::Ok))
+    }
+}
+
+impl Request for PingRequest {
+    fn execute(&self, _: &mut LockedState, _: &mut Peer) -> Result<Response, CmdError> {
+        Ok(GenericResponse(Status::Ok))
     }
 }
