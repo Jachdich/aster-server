@@ -8,15 +8,15 @@ use serde_json::json;
 use diesel::prelude::*;
 use serde::Deserialize;
 
-#[derive(Deserialize)] pub struct GetIconPacket;
-#[derive(Deserialize)] pub struct GetNamePacket;
-#[derive(Deserialize)] pub struct GetMetadataPacket;
-#[derive(Deserialize)] pub struct ListChannelsPacket;
-#[derive(Deserialize)] pub struct ListEmojiPacket;
-#[derive(Deserialize)] pub struct GetEmojiPacket { pub uid: i64 }
-#[derive(Deserialize)] pub struct GetUserPacket { pub uuid: i64 }
+#[derive(Deserialize)] pub struct GetIconRequest;
+#[derive(Deserialize)] pub struct GetNameRequest;
+#[derive(Deserialize)] pub struct GetMetadataRequest;
+#[derive(Deserialize)] pub struct ListChannelsRequest;
+#[derive(Deserialize)] pub struct ListEmojiRequest;
+#[derive(Deserialize)] pub struct GetEmojiRequest { pub uuid: i64 }
+#[derive(Deserialize)] pub struct GetUserRequest { pub uuid: i64 }
 
-impl Packet for GetMetadataPacket {
+impl Packet for GetMetadataRequest {
     fn execute(&self, state_lock: &mut LockedState, _: &mut Peer) -> JsonValue {
         let mut meta: Vec<JsonValue> = Vec::new();
         for v in &state_lock.get_users() {
@@ -26,7 +26,7 @@ impl Packet for GetMetadataPacket {
     }
 }
 
-impl Packet for GetUserPacket {
+impl Packet for GetUserRequest {
     fn execute(&self, state_lock: &mut LockedState, _: &mut Peer) -> JsonValue {
         match state_lock.get_user(&self.uuid) {
             Ok(Some(peer_meta)) => {
@@ -43,19 +43,19 @@ impl Packet for GetUserPacket {
 }
 
 
-impl Packet for GetIconPacket {
+impl Packet for GetIconRequest {
     fn execute(&self, _: &mut LockedState, _: &mut Peer) -> JsonValue {
         json!({"command": "get_icon", "data": CONF.icon.to_owned(), "status": Status::Ok as i32})
     }
 }
 
-impl Packet for GetNamePacket {
+impl Packet for GetNameRequest {
     fn execute(&self, _: &mut LockedState, _: &mut Peer) -> JsonValue {
         json!({"command": "get_name", "data": CONF.name.to_owned(), "status": Status::Ok as i32})
     }
 }
 
-impl Packet for ListChannelsPacket {
+impl Packet for ListChannelsRequest {
     fn execute(&self, state_lock: &mut LockedState, _: &mut Peer) -> JsonValue {
         let mut res: Vec<JsonValue> = Vec::new();
         let channels = state_lock.get_channels();
@@ -67,10 +67,10 @@ impl Packet for ListChannelsPacket {
     }
 }
 
-impl Packet for GetEmojiPacket {
+impl Packet for GetEmojiRequest {
     fn execute(&self, state_lock: &mut LockedState, _: &mut Peer) -> JsonValue {
         let mut results = schema::emojis::table
-            .filter(schema::emojis::uuid.eq(self.uid))
+            .filter(schema::emojis::uuid.eq(self.uuid))
             .limit(1)
             .load::<Emoji>(&mut state_lock.conn).unwrap();
         if results.is_empty() {
@@ -81,7 +81,7 @@ impl Packet for GetEmojiPacket {
     }
 }
 
-impl Packet for ListEmojiPacket {
+impl Packet for ListEmojiRequest {
     fn execute(&self, state_lock: &mut LockedState, _: &mut Peer) -> JsonValue {
         let results = schema::emojis::table.load::<Emoji>(&mut state_lock.conn).unwrap();
         json!({"command": "list_emoji", "status": Status::Ok as i32,

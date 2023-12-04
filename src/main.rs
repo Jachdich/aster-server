@@ -43,6 +43,9 @@ const API_VERSION_RELEASE: u8 = 0;
 const API_VERSION_MAJOR: u8 = 3;
 const API_VERSION_MINOR: u8 = 0;
 
+//DEBUG
+type SocketStream = TcpStream;
+
 #[derive(Deserialize)]
 pub struct Config {
     pub addr: String,
@@ -116,8 +119,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
         let state = Arc::clone(&state);
 
         tokio::spawn(async move {
-            let tls_stream = tls_acceptor.accept(stream).await.expect("Accept error");
-            if let Err(e) = process(state, tls_stream, addr).await {
+            // let tls_stream = tls_acceptor.accept(stream).await.expect("Accept error");
+            if let Err(e) = process(state, stream, addr).await {
                 println!("An error occurred: {:?}", e);
             }
             println!("Lost connection from {}", &addr);
@@ -127,7 +130,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
 struct ShittyStream {
     c: char,
-    s: TlsStream<TcpStream>,
+    s: SocketStream,
+}
+
+fn asdf() {
+    
 }
 
 impl AsyncRead for ShittyStream {
@@ -172,7 +179,7 @@ impl AsyncWrite for ShittyStream {
 
 async fn process(
     state: Arc<Mutex<Shared>>,
-    mut stream: TlsStream<TcpStream>,
+    mut stream: SocketStream,
     addr: SocketAddr,
 ) -> Result<(), Box<dyn Error>> {
 

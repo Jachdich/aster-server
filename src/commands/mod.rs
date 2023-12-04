@@ -9,7 +9,7 @@ use log_any::*;
 use log_out::*;
 
 use crate::helper::{gen_uuid, JsonValue, LockedState};
-use crate::models::{SyncData, SyncServer, SyncServerQuery};
+use crate::models::{SyncData, SyncServer, SyncServerQuery, User};
 use crate::message::Message;
 use crate::peer::Peer;
 use crate::schema;
@@ -17,13 +17,13 @@ use crate::shared::Shared;
 
 use diesel::prelude::*;
 use enum_dispatch::enum_dispatch;
-use futures::SinkExt;
-use serde::Deserialize;
+use serde::{Serialize, Deserialize, Serializer};
 use serde_json::json;
 use std::error::Error;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
+#[derive(Clone, Copy)]
 pub enum Status {
     Ok = 200,
     BadRequest = 400,
@@ -34,94 +34,122 @@ pub enum Status {
     MethodNotAllowed = 405,
 }
 
+impl Serialize for Status {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_i32(*self as i32)
+    }
+}
+
 #[derive(Deserialize)]
-pub struct SendPacket {
+pub struct SendRequest {
     pub content: String,
     pub channel: i64,
 }
+
 #[derive(Deserialize)]
-pub struct HistoryPacket {
+pub struct HistoryRequest {
     pub num: u32,
     pub channel: i64,
 }
 
 #[derive(Deserialize)]
-pub struct SyncSetPacket {
+pub struct SyncSetRequest {
     pub uname: String,
     pub pfp: String,
 }
 
 #[derive(Deserialize)]
-pub struct SyncSetServersPacket {
+pub struct SyncSetServersRequest {
     pub servers: Vec<SyncServer>,
 }
 
 #[derive(Deserialize)]
-pub struct PingPacket;
-#[derive(Deserialize)]
-pub struct NickPacket {
+pub struct NickRequest {
     pub nick: String,
 }
 #[derive(Deserialize)]
-pub struct OnlinePacket;
-#[derive(Deserialize)]
-pub struct PfpPacket {
+pub struct PfpRequest {
     pub data: String,
 }
-#[derive(Deserialize)]
-pub struct SyncGetPacket;
-#[derive(Deserialize)]
-pub struct SyncGetServersPacket;
-#[derive(Deserialize)]
-pub struct LeavePacket;
+#[derive(Deserialize)] pub struct SyncGetRequest;
+#[derive(Deserialize)] pub struct SyncGetServersRequest;
+#[derive(Deserialize)] pub struct LeaveRequest;
+#[derive(Deserialize)] pub struct OnlineRequest;
+#[derive(Deserialize)] pub struct PingRequest;
+
+#[derive(Serialize)]
+pub struct RegisterResponse {
+    pub status: Status,
+    pub uuid: Option<i64>,
+}
+
+#[derive(Serialize)]
+pub struct MetadataResponse {
+    pub status: Status,
+    pub data: Vec<User>,
+}
+
+#[derive(Serialize)]
+pub struct OnlineResponse {
+    pub status: Status,
+    pub data: Vec<i64>,
+}
+
+#[derive(Serialize)]
+pub struct LeaveResponse {
+    pub status: Status,
+}
+
+#[derive(Serialize)]
+pub struct PingResponse {
+    pub status: Status,
+}
+
+#[derive(Serialize)]
+pub struct NickResponse {
+    pub status: Status,
+}
+
+
+
+#[derive(Serialize)]
+#[serde(tag = "command")]
+enum Response {
+    #[serde(rename = "register")] RegisterResponse,
+    #[serde(rename = "metadata")] MetadataResponse,
+    #[serde(rename = "online")]   OnlineResponse,
+    #[serde(rename = "leave")]    LeaveResponse,
+    #[serde(rename = "ping")]     PingResponse,
+    #[serde(rename = "nick")]     NickResponse,
+}
 
 #[enum_dispatch]
 #[derive(Deserialize)]
 #[serde(tag = "command")]
-enum Packets {
-    #[serde(rename = "register")]
-    RegisterPacket,
-    #[serde(rename = "login")]
-    LoginPacket,
-    #[serde(rename = "ping")]
-    PingPacket,
-    #[serde(rename = "nick")]
-    NickPacket,
-    #[serde(rename = "online")]
-    OnlinePacket,
-    #[serde(rename = "send")]
-    SendPacket,
-    #[serde(rename = "get_metadata")]
-    GetMetadataPacket,
-    #[serde(rename = "get_name")]
-    GetNamePacket,
-    #[serde(rename = "get_icon")]
-    GetIconPacket,
-    #[serde(rename = "list_emoji")]
-    ListEmojiPacket,
-    #[serde(rename = "get_emoji")]
-    GetEmojiPacket,
-    #[serde(rename = "list_channels")]
-    ListChannelsPacket,
-    #[serde(rename = "history")]
-    HistoryPacket,
-    #[serde(rename = "pfp")]
-    PfpPacket,
-    #[serde(rename = "sync_set")]
-    SyncSetPacket,
-    #[serde(rename = "sync_get")]
-    SyncGetPacket,
-    #[serde(rename = "sync_set_servers")]
-    SyncSetServersPacket,
-    #[serde(rename = "sync_get_servers")]
-    SyncGetServersPacket,
-    #[serde(rename = "leave")]
-    LeavePacket,
-    #[serde(rename = "get_user")]
-    GetUserPacket,
+enum Request {
+    #[serde(rename = "register")]      RegisterRequest,
+    #[serde(rename = "login")]         LoginRequest,
+    #[serde(rename = "ping")]          PingRequest,
+    #[serde(rename = "nick")]          NickRequest,
+    #[serde(rename = "online")]        OnlineRequest,
+    #[serde(rename = "send")]          SendRequest,
+    #[serde(rename = "metadata")]      GetMetadataRequest,
+    #[serde(rename = "get_name")]      GetNameRequest,
+    #[serde(rename = "get_icon")]      GetIconRequest,
+    #[serde(rename = "list_emoji")]    ListEmojiRequest,
+    #[serde(rename = "get_emoji")]     GetEmojiRequest,
+    #[serde(rename = "list_channels")] ListChannelsRequest,
+    #[serde(rename = "history")]       HistoryRequest,
+    #[serde(rename = "pfp")]           PfpRequest,
+    #[serde(rename = "sync_set")]      SyncSetRequest,
+    #[serde(rename = "sync_get")]      SyncGetRequest,
+    #[serde(rename = "sync_set_servers")] SyncSetServersRequest,
+    #[serde(rename = "sync_get_servers")] SyncGetServersRequest,
+    #[serde(rename = "leave")]         LeaveRequest,
+    #[serde(rename = "get_user")]      GetUserRequest,
 }
 
-#[enum_dispatch(Packets)]
+#[enum_dispatch(Request)]
 pub trait Packet {
     fn execute(&self, state_lock: &mut LockedState, peer: &mut Peer) -> JsonValue;
 }
@@ -153,19 +181,19 @@ pub fn send_online(state_lock: &LockedState) {
     state_lock.send_to_all(final_json);
 }
 
-impl Packet for LeavePacket {
+impl Packet for LeaveRequest {
     fn execute(&self, _: &mut LockedState, _: &mut Peer) -> JsonValue {
         json!({"command": "leave", "status": Status::Ok as i32})
     }
 }
 
-impl Packet for PingPacket {
+impl Packet for PingRequest {
     fn execute(&self, _: &mut LockedState, _: &mut Peer) -> JsonValue {
         json!({"command": "ping", "status": Status::Ok as i32})
     }
 }
 
-impl Packet for NickPacket {
+impl Packet for NickRequest {
     fn execute(&self, state_lock: &mut LockedState, peer: &mut Peer) -> JsonValue {
         if !peer.logged_in {
             return json!({"command": "nick", "status": Status::Forbidden as i32});
@@ -191,7 +219,7 @@ impl Packet for NickPacket {
     }
 }
 
-impl Packet for OnlinePacket {
+impl Packet for OnlineRequest {
     fn execute(&self, state_lock: &mut LockedState, peer: &mut Peer) -> JsonValue {
         if !peer.logged_in {
             return json!({"command": "online", "status": Status::Forbidden as i32});
@@ -205,7 +233,7 @@ impl Packet for OnlinePacket {
     }
 }
 
-impl Packet for SendPacket {
+impl Packet for SendRequest {
     fn execute(&self, state_lock: &mut LockedState, peer: &mut Peer) -> JsonValue {
         if !peer.logged_in {
             return json!({"command": "send", "status": Status::Forbidden as i32});
@@ -233,10 +261,18 @@ impl Packet for SendPacket {
     }
 }
 
-impl Packet for HistoryPacket {
+impl Packet for HistoryRequest {
     fn execute(&self, state_lock: &mut LockedState, peer: &mut Peer) -> JsonValue {
         if !peer.logged_in {
             return json!({"command": "history", "status": Status::Forbidden as i32});
+        }
+        // check the channel exists
+        if let Ok(channel) = state_lock.get_channel(&self.channel) {
+            if channel.is_none() {
+                return json!({"command": "history", "status": Status::NotFound as i32});
+            }
+        } else {
+            return json!({"command": "history", "status": Status::InternalError as i32});
         }
         match schema::messages::table
             .filter(schema::messages::channel_uuid.eq(self.channel))
@@ -259,7 +295,7 @@ impl Packet for HistoryPacket {
     }
 }
 
-impl Packet for PfpPacket {
+impl Packet for PfpRequest {
     fn execute(&self, state_lock: &mut LockedState, peer: &mut Peer) -> JsonValue {
         if !peer.logged_in {
             return json!({"command": "pfp", "status": Status::Forbidden as i32});
@@ -284,7 +320,7 @@ impl Packet for PfpPacket {
     }
 }
 
-impl Packet for SyncSetPacket {
+impl Packet for SyncSetRequest {
     fn execute(&self, state_lock: &mut LockedState, peer: &mut Peer) -> JsonValue {
         if !peer.logged_in {
             return json!({"command": "sync_set", "status": Status::Forbidden as i32});
@@ -324,7 +360,7 @@ impl Packet for SyncSetPacket {
     }
 }
 
-impl Packet for SyncGetPacket {
+impl Packet for SyncGetRequest {
     fn execute(&self, state_lock: &mut LockedState, peer: &mut Peer) -> JsonValue {
         if !peer.logged_in {
             return json!({"command": "sync_get", "status": Status::Forbidden as i32});
@@ -346,7 +382,7 @@ impl Packet for SyncGetPacket {
         }
     }
 }
-impl Packet for SyncSetServersPacket {
+impl Packet for SyncSetServersRequest {
     fn execute(&self, state_lock: &mut LockedState, peer: &mut Peer) -> JsonValue {
         if !peer.logged_in {
             return json!({"command": "sync_set_servers", "status": Status::Forbidden as i32});
@@ -374,7 +410,7 @@ impl Packet for SyncSetServersPacket {
     }
 }
 
-impl Packet for SyncGetServersPacket {
+impl Packet for SyncGetServersRequest {
     fn execute(&self, state_lock: &mut LockedState, peer: &mut Peer) -> JsonValue {
         if !peer.logged_in {
             return json!({"command": "sync_get_servers", "status": Status::Forbidden as i32});
@@ -410,10 +446,10 @@ pub async fn process_command(
     state: Arc<Mutex<Shared>>,
     peer: &mut Peer,
 ) -> Result<(), Box<dyn Error>> {
-    let response = match serde_json::from_str::<Packets>(msg) {
-        Ok(packets) => {
+    let response = match serde_json::from_str::<Request>(msg) {
+        Ok(request) => {
             let mut state_lock = state.lock().await;
-            packets.execute(&mut state_lock, peer)
+            request.execute(&mut state_lock, peer)
         }
         Err(e) => {
             println!(

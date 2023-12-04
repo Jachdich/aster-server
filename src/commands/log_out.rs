@@ -9,19 +9,19 @@ use serde::Deserialize;
 use serde_json::json;
 
 #[derive(Deserialize)]
-pub struct RegisterPacket {
+pub struct RegisterRequest {
     pub passwd: String,
     pub name: String,
 }
 
 #[derive(Deserialize)]
-pub struct LoginPacket {
+pub struct LoginRequest {
     pub passwd: String,
     pub uname: Option<String>,
     pub uuid: Option<i64>,
 }
 
-impl Packet for RegisterPacket {
+impl Packet for RegisterRequest {
     fn execute(&self, state_lock: &mut LockedState, peer: &mut Peer) -> JsonValue {
         if peer.logged_in {
             //registering doesn't make sense when logged in
@@ -52,7 +52,7 @@ impl Packet for RegisterPacket {
     }
 }
 
-impl Packet for LoginPacket {
+impl Packet for LoginRequest {
     fn execute(&self, state_lock: &mut LockedState, peer: &mut Peer) -> JsonValue {
         if peer.logged_in {
             //logging in doesn't make sense when already logged in
