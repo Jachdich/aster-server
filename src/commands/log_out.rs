@@ -1,12 +1,14 @@
-use crate::commands::{send_metadata, send_online};
-use crate::commands::{Packet, Status};
-use crate::helper::{gen_uuid, JsonValue, LockedState};
+use crate::commands::{
+    send_metadata, send_online, CmdError,
+    Response::{self, *},
+};
+use crate::commands::{Request, Status};
+use crate::helper::{gen_uuid, LockedState};
 use crate::models::User;
 use crate::Peer;
 use crate::CONF;
 
 use serde::Deserialize;
-use serde_json::json;
 
 #[derive(Deserialize)]
 pub struct RegisterRequest {
@@ -21,11 +23,11 @@ pub struct LoginRequest {
     pub uuid: Option<i64>,
 }
 
-impl Packet for RegisterRequest {
-    fn execute(&self, state_lock: &mut LockedState, peer: &mut Peer) -> JsonValue {
-        if peer.logged_in {
+impl Request for RegisterRequest {
+    fn execute(&self, state_lock: &mut LockedState, peer: &mut Peer) -> Result<Response, CmdError> {
+        if peer.logged_in() {
             //registering doesn't make sense when logged in
-            return json!({"command": "register", "status": Status::MethodNotAllowed as i32});
+            return Ok(GenericResponse(Status::MethodNotAllowed));
         }
 
         let uuid = gen_uuid();
@@ -36,49 +38,44 @@ impl Packet for RegisterRequest {
             group_uuid: 0,
         };
 
-        if let Err(e) = state_lock.insert_user(user) {
-            println!("Error(RegisterPacket): inserting user: {}", e);
-            return json!({"command": "register", "status": Status::InternalError as i32});
-        }
-        peer.logged_in = true;
-        peer.user = uuid;
+        state_lock.insert_user(user)?;
+        peer.uuid = Some(uuid);
 
-        state_lock.inc_online(peer.user);
+        state_lock.inc_online(uuid);
 
         send_metadata(state_lock, peer);
         send_online(state_lock);
 
-        json!({"command": "register", "status": Status::Ok as i32, "uuid": uuid})
+        Ok(RegisterResponse { uuid })
     }
 }
 
-impl Packet for LoginRequest {
-    fn execute(&self, state_lock: &mut LockedState, peer: &mut Peer) -> JsonValue {
-        if peer.logged_in {
+impl Request for LoginRequest {
+    fn execute(&self, state_lock: &mut LockedState, peer: &mut Peer) -> Result<Response, CmdError> {
+        if peer.logged_in() {
             //logging in doesn't make sense when already logged in
-            return json!({"command": "login", "status": Status::MethodNotAllowed as i32});
+            return Ok(GenericResponse(Status::MethodNotAllowed));
         }
 
         let uuid = if let Some(uname) = &self.uname {
-            if let Some(user) = state_lock.get_user_by_name(uname) {
+            if let Some(user) = state_lock.get_user_by_name(uname)? {
                 user.uuid
             } else {
-                return json!({"command": "login", "status": Status::NotFound as i32});
+                return Ok(GenericResponse(Status::NotFound));
             }
         } else if let Some(uuid) = self.uuid {
             uuid
         } else {
             //neither uname nor uuid were provided
-            return json!({"command": "login", "status": Status::BadRequest as i32});
+            return Ok(GenericResponse(Status::BadRequest));
         };
 
         //TODO confirm password
-        peer.user = uuid;
-        peer.logged_in = true;
+        peer.uuid = Some(uuid);
 
-        state_lock.inc_online(peer.user);
+        state_lock.inc_online(uuid);
         send_metadata(state_lock, peer);
         send_online(state_lock);
-        json!({"command": "login", "status": Status::Ok as i32, "uuid": uuid})
+        Ok(LoginResponse { uuid })
     }
 }

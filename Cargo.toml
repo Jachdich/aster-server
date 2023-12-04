@@ -27,3 +27,6 @@ sodiumoxide = "*"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 enum_dispatch = "0.3.8"
+log = "0.4.18"
+env_logger = "0.10.0"
+anyhow = "1.0.71"

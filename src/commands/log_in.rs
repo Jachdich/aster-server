@@ -1,0 +1,219 @@
+use crate::commands::{
+    send_metadata, CmdError, Request,
+    Response::{self, *},
+    Status,
+};
+use crate::helper::{gen_uuid, LockedState};
+use crate::message::Message;
+use crate::models::{SyncData, SyncServer, SyncServerQuery};
+use crate::peer::Peer;
+use crate::schema;
+use diesel::prelude::*;
+use serde::Deserialize;
+
+#[derive(Deserialize)]
+pub struct SendRequest {
+    pub content: String,
+    pub channel: i64,
+}
+#[derive(Deserialize)]
+pub struct HistoryRequest {
+    pub num: u32,
+    pub channel: i64,
+}
+
+#[derive(Deserialize)]
+pub struct SyncSetRequest {
+    pub uname: String,
+    pub pfp: String,
+}
+
+#[derive(Deserialize)]
+pub struct SyncSetServersRequest {
+    pub servers: Vec<SyncServer>,
+}
+
+#[derive(Deserialize)]
+pub struct NickRequest {
+    pub nick: String,
+}
+
+#[derive(Deserialize)]
+pub struct OnlineRequest;
+
+#[derive(Deserialize)]
+pub struct PfpRequest {
+    pub data: String,
+}
+
+#[derive(Deserialize)]
+pub struct SyncGetRequest;
+
+#[derive(Deserialize)]
+pub struct SyncGetServersRequest;
+
+impl Request for NickRequest {
+    fn execute(&self, state_lock: &mut LockedState, peer: &mut Peer) -> Result<Response, CmdError> {
+        if !peer.logged_in() {
+            return Ok(GenericResponse(Status::Forbidden));
+        }
+
+        Ok(match state_lock.get_user(&peer.uuid.unwrap())? {
+            Some(mut user) => {
+                user.name = self.nick.to_string();
+
+                state_lock.update_user(user)?;
+                send_metadata(state_lock, peer);
+                GenericResponse(Status::Ok)
+            }
+            None => GenericResponse(Status::NotFound),
+        })
+    }
+}
+
+impl Request for OnlineRequest {
+    fn execute(&self, state_lock: &mut LockedState, peer: &mut Peer) -> Result<Response, CmdError> {
+        if !peer.logged_in() {
+            return Ok(GenericResponse(Status::Forbidden));
+        }
+
+        Ok(OnlineResponse {
+            data: state_lock.online.keys().copied().collect(),
+        })
+    }
+}
+
+impl Request for SendRequest {
+    fn execute(&self, state_lock: &mut LockedState, peer: &mut Peer) -> Result<Response, CmdError> {
+        if !peer.logged_in() {
+            return Ok(GenericResponse(Status::Forbidden));
+        }
+        let msg = Message {
+            uuid: gen_uuid(),
+            content: self.content.to_owned(),
+            author_uuid: peer.uuid.unwrap(),
+            channel_uuid: self.channel,
+            date: chrono::offset::Utc::now().timestamp() as i32,
+        };
+        state_lock.add_to_history(&msg)?;
+        let mut msg_json = serde_json::to_value(&msg)?;
+        msg_json["command"] = "content".into();
+        msg_json["status"] = (Status::Ok as i32).into();
+        state_lock.send_to_all(msg_json)?;
+        Ok(GenericResponse(Status::Ok))
+    }
+}
+
+impl Request for HistoryRequest {
+    fn execute(&self, state_lock: &mut LockedState, peer: &mut Peer) -> Result<Response, CmdError> {
+        if !peer.logged_in() {
+            return Ok(GenericResponse(Status::Forbidden));
+        }
+        let mut history = schema::messages::table
+            .filter(schema::messages::channel_uuid.eq(self.channel))
+            .order(schema::messages::date.desc())
+            .limit(self.num.into())
+            .load::<Message>(&mut state_lock.conn)?;
+        history.reverse();
+        Ok(HistoryResponse { data: history })
+    }
+}
+
+impl Request for PfpRequest {
+    fn execute(&self, state_lock: &mut LockedState, peer: &mut Peer) -> Result<Response, CmdError> {
+        if !peer.logged_in() {
+            return Ok(GenericResponse(Status::Forbidden));
+        }
+        match state_lock.get_user(&peer.uuid.unwrap())? {
+            Some(mut user) => {
+                user.pfp = self.data.to_string();
+
+                state_lock.update_user(user)?;
+                send_metadata(state_lock, peer);
+                Ok(GenericResponse(Status::Ok))
+            }
+
+            // TODO this should probably be an internal error, this user really should exist
+            None => Ok(GenericResponse(Status::NotFound)),
+        }
+    }
+}
+
+impl Request for SyncSetRequest {
+    fn execute(&self, state_lock: &mut LockedState, peer: &mut Peer) -> Result<Response, CmdError> {
+        if !peer.logged_in() {
+            return Ok(GenericResponse(Status::Forbidden));
+        }
+
+        let mut sync_data = match state_lock.get_sync_data(&peer.uuid.unwrap())? {
+            Some(data) => data,
+            None => {
+                let data = SyncData::new(peer.uuid.unwrap());
+                state_lock.insert_sync_data(&data)?;
+                data
+            }
+        };
+
+        sync_data.uname = self.uname.clone();
+        sync_data.pfp = self.pfp.clone();
+
+        state_lock.update_sync_data(sync_data)?;
+
+        Ok(GenericResponse(Status::Ok))
+    }
+}
+
+impl Request for SyncGetRequest {
+    fn execute(&self, state_lock: &mut LockedState, peer: &mut Peer) -> Result<Response, CmdError> {
+        if !peer.logged_in() {
+            return Ok(GenericResponse(Status::Forbidden));
+        }
+
+        let sync_data = state_lock.get_sync_data(&peer.uuid.unwrap())?;
+        match sync_data {
+            Some(sync_data) => Ok(SyncGetResponse { data: sync_data }),
+            None => Ok(GenericResponse(Status::NotFound)),
+        }
+    }
+}
+impl Request for SyncSetServersRequest {
+    fn execute(&self, state_lock: &mut LockedState, peer: &mut Peer) -> Result<Response, CmdError> {
+        if !peer.logged_in() {
+            return Ok(GenericResponse(Status::Forbidden));
+        }
+
+        diesel::delete(
+            schema::sync_servers::table
+                .filter(schema::sync_servers::user_uuid.eq(peer.uuid.unwrap())),
+        )
+        .execute(&mut state_lock.conn)?;
+
+        for (idx, sync_server) in self.servers.iter().enumerate() {
+            let mut server = sync_server.clone();
+            server.user_uuid = peer.uuid.unwrap();
+            server.idx = idx as i32;
+            state_lock.insert_sync_server(server)?;
+        }
+
+        Ok(GenericResponse(Status::Ok))
+    }
+}
+
+impl Request for SyncGetServersRequest {
+    fn execute(&self, state_lock: &mut LockedState, peer: &mut Peer) -> Result<Response, CmdError> {
+        if !peer.logged_in() {
+            return Ok(GenericResponse(Status::Forbidden));
+        }
+        let servers = schema::sync_servers::table
+            .filter(schema::sync_servers::user_uuid.eq(peer.uuid.unwrap()))
+            .order(schema::sync_servers::idx.asc())
+            .load::<SyncServerQuery>(&mut state_lock.conn)?;
+
+        let servers = servers
+            .into_iter()
+            .map(SyncServer::from)
+            .collect::<Vec<SyncServer>>();
+
+        Ok(SyncGetServersResponse { servers })
+    }
+}
