@@ -71,7 +71,7 @@ impl Request for GetNameRequest {
 impl Request for ListChannelsRequest {
     fn execute(&self, state_lock: &mut LockedState, _: &mut Peer) -> Result<Response, CmdError> {
         let channels = state_lock.get_channels()?;
-        Ok(GetChannelsResponse { data: channels })
+        Ok(ListChannelsResponse { data: channels })
     }
 }
 

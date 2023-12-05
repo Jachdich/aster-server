@@ -75,7 +75,7 @@ pub enum Response {
     #[serde(rename = "get_user")]         GetUserResponse { data: User },
     #[serde(rename = "get_icon")]         GetIconResponse { data: String },
     #[serde(rename = "get_name")]         GetNameResponse { data: String },
-    #[serde(rename = "get_channels")]     GetChannelsResponse { data: Vec<Channel> },
+    #[serde(rename = "list_channels")]    ListChannelsResponse { data: Vec<Channel> },
     #[serde(rename = "get_emoji")]        GetEmojiResponse { data: Emoji },
     #[serde(rename = "list_emoji")]       ListEmojiResponse { data: Vec<(String, i64)> },
     #[serde(rename = "sync_get")]
@@ -180,6 +180,7 @@ pub fn process_command(
             json!({"command": "unknown", "status": Status::BadRequest as i32})
         }
     };
+    println!("Got request '{}' and responded with '{:?}'", msg, response);
     peer.tx.send(response)?;
     Ok(())
 }
