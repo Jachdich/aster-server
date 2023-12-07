@@ -4,7 +4,7 @@ use crate::commands::{
     Status,
 };
 use crate::helper::{gen_uuid, LockedState};
-use crate::message::Message;
+use crate::message::{Message, NewMessage};
 use crate::models::{SyncData, SyncServer, SyncServerQuery};
 use crate::peer::Peer;
 use crate::schema;
@@ -20,6 +20,7 @@ pub struct SendRequest {
 pub struct HistoryRequest {
     pub num: u32,
     pub channel: i64,
+    pub before_message: Option<i64>,
 }
 
 #[derive(Deserialize)]
@@ -88,7 +89,7 @@ impl Request for SendRequest {
         if !peer.logged_in() {
             return Ok(GenericResponse(Status::Forbidden));
         }
-        let msg = Message {
+        let msg = NewMessage {
             uuid: gen_uuid(),
             content: self.content.to_owned(),
             author_uuid: peer.uuid.unwrap(),
@@ -109,9 +110,22 @@ impl Request for HistoryRequest {
         if !peer.logged_in() {
             return Ok(GenericResponse(Status::Forbidden));
         }
+        if state_lock.get_channel(&self.channel)?.is_none() {
+            return Ok(GenericResponse(Status::NotFound));
+        }
+        let init_rowid = if let Some(uuid) = self.before_message {
+            let init_msg = schema::messages::table
+                .filter(schema::messages::uuid.eq(uuid))
+                .first::<Message>(&mut state_lock.conn)?;
+            init_msg.rowid
+        } else {
+            i32::MAX
+        };
+        log::warn!("{}", init_rowid);
         let mut history = schema::messages::table
             .filter(schema::messages::channel_uuid.eq(self.channel))
-            .order(schema::messages::date.desc())
+            .filter(schema::messages::rowid.lt(init_rowid))
+            .order(schema::messages::rowid.desc())
             .limit(self.num.into())
             .load::<Message>(&mut state_lock.conn)?;
         history.reverse();

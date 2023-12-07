@@ -97,7 +97,7 @@ impl Shared {
 
     //pub fn get_password(&self, user: &i64) ->
 
-    pub fn add_to_history(&mut self, msg: &Message) -> Result<(), diesel::result::Error> {
+    pub fn add_to_history(&mut self, msg: &NewMessage) -> Result<(), diesel::result::Error> {
         let _ = diesel::insert_into(schema::messages::table)
             .values(msg)
             .execute(&mut self.conn)?;
