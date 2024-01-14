@@ -37,7 +37,7 @@ use peer::Peer;
 use shared::Shared;
 
 const API_VERSION_RELEASE: u8 = 0;
-const API_VERSION_MAJOR: u8 = 4;
+const API_VERSION_MAJOR: u8 = 5;
 const API_VERSION_MINOR: u8 = 0;
 
 //DEBUG
