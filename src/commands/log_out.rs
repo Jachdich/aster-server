@@ -70,6 +70,11 @@ impl Request for LoginRequest {
             return Ok(GenericResponse(Status::BadRequest));
         };
 
+        // check the uuid exists
+        if state_lock.get_user(&uuid)?.is_none() {
+            return Ok(GenericResponse(Status::NotFound));
+        }
+
         //TODO confirm password
         peer.uuid = Some(uuid);
 
