@@ -89,6 +89,10 @@ impl Request for SendRequest {
         if !peer.logged_in() {
             return Ok(GenericResponse(Status::Forbidden));
         }
+        // Check for an empty message, or one that contains only whitespace
+        if self.content.chars().all(|c| c.is_whitespace()) {
+            return Ok(GenericResponse(Status::BadRequest));
+        }
         let msg = NewMessage {
             uuid: gen_uuid(),
             content: self.content.to_owned(),
@@ -121,7 +125,6 @@ impl Request for HistoryRequest {
         } else {
             i32::MAX
         };
-        log::warn!("{}", init_rowid);
         let mut history = schema::messages::table
             .filter(schema::messages::channel_uuid.eq(self.channel))
             .filter(schema::messages::rowid.lt(init_rowid))
