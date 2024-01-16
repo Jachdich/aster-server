@@ -36,9 +36,7 @@ use crate::commands::send_online;
 use peer::Peer;
 use shared::Shared;
 
-const API_VERSION_RELEASE: u8 = 0;
-const API_VERSION_MAJOR: u8 = 5;
-const API_VERSION_MINOR: u8 = 0;
+const API_VERSION: [u8; 3] = [1, 0, 0]; // major, minor, patch
 
 //DEBUG
 type SocketStream = TcpStream;
@@ -205,7 +203,8 @@ async fn process(
         let mut state = state.lock().await;
         state.peers.push((peer.tx.clone(), peer.addr));
     }
-    peer.tx.send(json!({"command": "API_version", "rel": API_VERSION_RELEASE, "maj": API_VERSION_MAJOR, "min": API_VERSION_MINOR, "status": 200}))?;
+    peer.tx
+        .send(json!({"command": "API_version", "version": API_VERSION, "status": 200}))?;
     //TODO handshake protocol
 
     //identification of whether a raw socket (json protocol) or websocket has connected
@@ -219,7 +218,7 @@ async fn process(
     // hang on hang on I can explain
     // so basically i have to read the first character of the stream
     // to deterime whether it is a websocket connection or a raw socket connection
-    // however, TlsStream doesn't implement `.peek()`. Hmhp. So I had to do this
+    // however, TlsStream doesn't implement `.peek()`. Hmph. So I had to do this
     // attrosity: ShittyStream basically just wraps the stream, implementing
     // AsyncRead and AsyncWrite, but the very first character that gets read
     // is the one that we read from the original stream in the first place.
@@ -228,6 +227,7 @@ async fn process(
         c: first_char,
         s: stream,
     };
+
     if first_char == '{' {
         //JSON shit
         let mut lines = Framed::new(stream_with_first_char, LinesCodec::new());
