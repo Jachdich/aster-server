@@ -63,7 +63,7 @@ impl Request for GetIconRequest {
 impl Request for GetNameRequest {
     fn execute(&self, _: &mut LockedState, _: &mut Peer) -> Result<Response, CmdError> {
         Ok(GetNameResponse {
-            data: CONF.icon.to_owned(),
+            data: CONF.name.to_owned(),
         })
     }
 }
