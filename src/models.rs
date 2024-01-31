@@ -1,6 +1,6 @@
+use crate::helper::gen_uuid;
 use crate::schema::*;
 use diesel::{Insertable, Queryable};
-use rand::prelude::*;
 use serde::{Deserialize, Serialize};
 
 #[derive(Queryable, Insertable, Clone, Serialize)]
@@ -79,10 +79,6 @@ pub struct Emoji {
     pub data: String,
 }
 
-fn gen_uuid() -> i64 {
-    (random::<u64>() >> 1) as i64
-}
-
 impl Emoji {
     pub fn new(uuid: i64, name: String, data: String) -> Self {
         Self { uuid, name, data }
@@ -115,7 +111,7 @@ impl From<SyncServerQuery> for SyncServer {
 
 impl Channel {
     pub fn new(name: &str) -> Self {
-        let uuid: i64 = gen_uuid();
+        let uuid = gen_uuid();
         Channel {
             uuid,
             name: name.to_string(),
