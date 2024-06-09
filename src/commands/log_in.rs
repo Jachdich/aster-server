@@ -101,8 +101,10 @@ impl Request for SendRequest {
             date: chrono::offset::Utc::now().timestamp() as i32,
         };
         state_lock.add_to_history(&msg)?;
-        let mut msg_json = serde_json::to_value(&msg)?;
-        msg_json["command"] = "content".into();
+        let response = SendResponse {
+            message: msg.into(),
+        };
+        let mut msg_json = serde_json::to_value(&response)?;
         msg_json["status"] = (Status::Ok as i32).into();
         state_lock.send_to_all(msg_json)?;
         Ok(GenericResponse(Status::Ok))

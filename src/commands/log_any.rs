@@ -28,7 +28,7 @@ pub struct PingRequest;
 
 #[derive(Deserialize)]
 pub struct GetEmojiRequest {
-    pub uid: i64,
+    pub uuid: i64,
 }
 #[derive(Deserialize)]
 pub struct GetUserRequest {
@@ -78,7 +78,7 @@ impl Request for ListChannelsRequest {
 impl Request for GetEmojiRequest {
     fn execute(&self, state_lock: &mut LockedState, _: &mut Peer) -> Result<Response, CmdError> {
         let mut results = schema::emojis::table
-            .filter(schema::emojis::uuid.eq(self.uid))
+            .filter(schema::emojis::uuid.eq(self.uuid))
             .limit(1)
             .load::<Emoji>(&mut state_lock.conn)
             .unwrap();

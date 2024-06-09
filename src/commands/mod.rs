@@ -14,7 +14,7 @@ use crate::peer::Peer;
 
 use crate::models::{Channel, Emoji, SyncData, SyncServer, User};
 use enum_dispatch::enum_dispatch;
-use serde::{Serialize, Deserialize, Serializer};
+use serde::{Deserialize, Serialize, Serializer};
 use serde_json::json;
 use std::error::Error;
 
@@ -78,6 +78,13 @@ pub enum Response {
     #[serde(rename = "list_channels")]    ListChannelsResponse { data: Vec<Channel> },
     #[serde(rename = "get_emoji")]        GetEmojiResponse { data: Emoji },
     #[serde(rename = "list_emoji")]       ListEmojiResponse { data: Vec<(String, i64)> },
+
+    #[serde(rename = "content")]
+    SendResponse {
+        #[serde(flatten)]
+        message: Message,
+    },
+
     #[serde(rename = "sync_get")]
     SyncGetResponse {
         #[serde(flatten)]
