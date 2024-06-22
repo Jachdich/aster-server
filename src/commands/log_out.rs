@@ -13,7 +13,7 @@ use serde::Deserialize;
 #[derive(Deserialize)]
 pub struct RegisterRequest {
     pub passwd: String,
-    pub name: String,
+    pub uname: String,
 }
 
 #[derive(Deserialize)]
@@ -32,7 +32,7 @@ impl Request for RegisterRequest {
 
         let uuid = gen_uuid();
         let user = User {
-            name: self.name.to_owned(),
+            name: self.uname.to_owned(),
             pfp: CONF.default_pfp.to_owned(),
             uuid,
             group_uuid: 0,

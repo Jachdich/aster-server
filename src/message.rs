@@ -23,3 +23,17 @@ pub struct NewMessage {
     pub channel_uuid: i64,
     pub date: i32,
 }
+
+// TODO this is slightly dubious: why zero rowid?
+impl From<NewMessage> for Message {
+    fn from(message: NewMessage) -> Self {
+        Self {
+            uuid: message.uuid,
+            content: message.content,
+            author_uuid: message.author_uuid,
+            channel_uuid: message.channel_uuid,
+            date: message.date,
+            rowid: 0,
+        }
+    }
+}
