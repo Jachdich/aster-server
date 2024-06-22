@@ -115,15 +115,22 @@ fn send_metadata(state_lock: &mut LockedState, peer: &Peer) {
     }
 }
 
-pub fn send_online(state_lock: &LockedState) {
-    let res: Vec<i64> = state_lock
+
+// naming: this name makes sense because
+// I think this function is beautiful
+pub fn zuza(state_lock: &LockedState) -> Vec<i64> {
+    state_lock
         .online
         .iter()
         .filter(|a| *a.1 > 0)
         .map(|a| *a.0)
-        .collect();
+        .collect()
+}
 
-    let mut final_json = serde_json::to_value(OnlineResponse { data: res }).unwrap(); // unwrap ok because OnlineResponse derives Serialize, and it does not contain any maps
+pub fn send_online(state_lock: &LockedState) {
+    let num_online = zuza(state_lock);
+
+    let mut final_json = serde_json::to_value(OnlineResponse { data: num_online }).unwrap(); // unwrap ok because OnlineResponse derives Serialize, and it does not contain any maps
     final_json["status"] = (Status::Ok as i32).into(); // to make sure the client doesn't panic...
     state_lock.send_to_all(final_json).unwrap(); //TODO get rid of this unwrap
 }

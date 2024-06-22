@@ -50,8 +50,10 @@ pub struct SyncData {
 #[derive(Insertable, Clone, Serialize, Deserialize)]
 #[diesel(table_name=sync_servers)]
 pub struct SyncServer {
+    #[serde(skip)]
     pub user_uuid: i64,
-    pub server_uuid: i64,
+    pub uuid: Option<i64>,
+    pub uname: String,
     pub ip: String,
     pub port: i32,
     pub pfp: Option<String>,
@@ -62,7 +64,8 @@ pub struct SyncServer {
 #[derive(Queryable, Clone)]
 pub struct SyncServerQuery {
     pub user_uuid: i64,
-    pub server_uuid: i64,
+    pub uuid: Option<i64>,
+    pub uname: String,
     pub ip: String,
     pub port: i32,
     pub pfp: Option<String>,
@@ -103,12 +106,13 @@ impl From<SyncServerQuery> for SyncServer {
     fn from(item: SyncServerQuery) -> Self {
         SyncServer {
             user_uuid: item.user_uuid,
-            server_uuid: item.server_uuid,
+            uuid: item.uuid,
             ip: item.ip,
             port: item.port,
             pfp: item.pfp,
             name: item.name,
             idx: item.idx,
+            uname: item.uname,
         }
     }
 }

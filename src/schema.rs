@@ -46,7 +46,8 @@ table! {
 table! {
     sync_servers (rowid) {
         user_uuid -> BigInt,
-        server_uuid -> BigInt,
+        uuid -> Nullable<BigInt>,
+        uname -> Text,
         ip -> Text,
         port -> Integer,
         pfp -> Nullable<Text>,
