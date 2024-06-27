@@ -7,3 +7,4 @@ pub fn gen_uuid() -> i64 {
 
 pub type LockedState<'a> = tokio::sync::MutexGuard<'a, Shared>;
 pub type JsonValue = serde_json::Value;
+pub type Uuid = i64;

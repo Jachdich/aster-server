@@ -3,3 +3,4 @@
 - more comments ofc
 - switch to rusqlite and use connection pools (?)
 - use once_cell instead of lazy_static
+- maybe use unnamed channels (which are allowed due to just being able to put any uuid as the channel uuid) as DM channels??

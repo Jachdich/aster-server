@@ -93,6 +93,12 @@ impl Request for SendRequest {
         if self.content.chars().all(|c| c.is_whitespace()) {
             return Ok(GenericResponse(Status::BadRequest));
         }
+
+        // check that we're sending to a channel that exists
+        if !state_lock.channel_exists(&self.channel)? {
+            return Ok(GenericResponse(Status::NotFound));
+        }
+        
         let msg = NewMessage {
             uuid: gen_uuid(),
             content: self.content.to_owned(),

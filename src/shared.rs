@@ -2,6 +2,7 @@ use crate::message::*;
 use crate::models::*;
 use crate::schema;
 use crate::CONF;
+use crate::helper::Uuid;
 use diesel::prelude::*;
 use std::collections::HashMap;
 use tokio::sync::mpsc;
@@ -80,6 +81,11 @@ impl Shared {
 
     pub fn get_channels(&mut self) -> Result<Vec<Channel>, diesel::result::Error> {
         schema::channels::table.load::<Channel>(&mut self.conn)
+    }
+
+    pub fn channel_exists(&mut self, uuid: &Uuid) -> Result<bool, diesel::result::Error> {
+        // TODO this might be slow     
+        Ok(self.get_channels()?.iter().find(|channel| channel.uuid == *uuid).is_some())
     }
 
     pub fn get_user(&mut self, user: &i64) -> Result<Option<User>, diesel::result::Error> {
