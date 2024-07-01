@@ -1,13 +1,16 @@
-use crate::commands::{
-    send_metadata, CmdError, Request,
-    Response::{self, *},
-    Status,
-};
 use crate::helper::{gen_uuid, LockedState};
 use crate::message::{Message, NewMessage};
 use crate::models::{SyncData, SyncServer, SyncServerQuery};
 use crate::peer::Peer;
 use crate::schema;
+use crate::{
+    commands::{
+        send_metadata, CmdError, Request,
+        Response::{self, *},
+        Status,
+    },
+    helper::Uuid,
+};
 use diesel::prelude::*;
 use serde::Deserialize;
 
@@ -52,6 +55,44 @@ pub struct SyncGetRequest;
 
 #[derive(Deserialize)]
 pub struct SyncGetServersRequest;
+
+#[derive(Deserialize)]
+pub struct EditRequest {
+    pub message: Uuid,
+    pub new_content: String,
+}
+
+impl Request for EditRequest {
+    fn execute(&self, state_lock: &mut LockedState, peer: &mut Peer) -> Result<Response, CmdError> {
+        if !peer.logged_in() {
+            return Ok(GenericResponse(Status::Forbidden));
+        }
+        let Some(message) = state_lock.get_message(self.message)? else {
+            return Ok(GenericResponse(Status::NotFound));
+        };
+        if Some(message.author_uuid) != peer.uuid {
+            return Ok(GenericResponse(Status::Forbidden));
+        }
+
+        diesel::update(schema::messages::table.filter(schema::messages::uuid.eq(message.uuid)))
+            .set((
+                schema::messages::content.eq(self.new_content.as_str()),
+                schema::messages::edited.eq(true),
+            ))
+            .execute(&mut state_lock.conn)?;
+
+        let msg = Response::MessageEditedResponse {
+            message: self.message,
+            new_content: self.new_content.clone(),
+        };
+
+        let mut msg_json = serde_json::to_value(msg)?;
+        msg_json["status"] = (Status::Ok as i32).into();
+        state_lock.send_to_all(msg_json)?;
+
+        Ok(GenericResponse(Status::Ok))
+    }
+}
 
 impl Request for NickRequest {
     fn execute(&self, state_lock: &mut LockedState, peer: &mut Peer) -> Result<Response, CmdError> {
@@ -98,22 +139,26 @@ impl Request for SendRequest {
         if !state_lock.channel_exists(&self.channel)? {
             return Ok(GenericResponse(Status::NotFound));
         }
-        
+
         let msg = NewMessage {
             uuid: gen_uuid(),
             content: self.content.to_owned(),
             author_uuid: peer.uuid.unwrap(),
             channel_uuid: self.channel,
             date: chrono::offset::Utc::now().timestamp() as i32,
+            edited: false,
         };
         state_lock.add_to_history(&msg)?;
-        let response = SendResponse {
+
+        let uuid = msg.uuid; // save for later
+
+        let response = ContentResponse {
             message: msg.into(),
         };
         let mut msg_json = serde_json::to_value(&response)?;
         msg_json["status"] = (Status::Ok as i32).into();
         state_lock.send_to_all(msg_json)?;
-        Ok(GenericResponse(Status::Ok))
+        Ok(SendResponse { message: uuid })
     }
 }
 

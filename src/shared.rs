@@ -1,8 +1,8 @@
+use crate::helper::Uuid;
 use crate::message::*;
 use crate::models::*;
 use crate::schema;
 use crate::CONF;
-use crate::helper::Uuid;
 use diesel::prelude::*;
 use std::collections::HashMap;
 use tokio::sync::mpsc;
@@ -84,8 +84,12 @@ impl Shared {
     }
 
     pub fn channel_exists(&mut self, uuid: &Uuid) -> Result<bool, diesel::result::Error> {
-        // TODO this might be slow     
-        Ok(self.get_channels()?.iter().find(|channel| channel.uuid == *uuid).is_some())
+        // TODO this might be slow
+        Ok(self
+            .get_channels()?
+            .iter()
+            .find(|channel| channel.uuid == *uuid)
+            .is_some())
     }
 
     pub fn get_user(&mut self, user: &i64) -> Result<Option<User>, diesel::result::Error> {
@@ -116,6 +120,18 @@ impl Shared {
             .limit(1)
             .load::<Channel>(&mut self.conn)?;
 
+        if results.len() == 1 {
+            Ok(Some(results.remove(0)))
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub fn get_message(&mut self, message: Uuid) -> Result<Option<Message>, diesel::result::Error> {
+        let mut results = schema::messages::table
+            .filter(schema::messages::uuid.eq(&message))
+            .limit(1)
+            .load::<Message>(&mut self.conn)?;
         if results.len() == 1 {
             Ok(Some(results.remove(0)))
         } else {

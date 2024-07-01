@@ -36,7 +36,7 @@ use crate::commands::send_online;
 use peer::Peer;
 use shared::Shared;
 
-const API_VERSION: [u8; 3] = [0, 0, 1]; // major, minor, patch
+const API_VERSION: [u8; 3] = [0, 1, 0]; // major, minor, patch
 
 //DEBUG
 type SocketStream = TcpStream;

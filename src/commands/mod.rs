@@ -8,7 +8,7 @@ use log_any::*;
 use log_in::*;
 use log_out::*;
 
-use crate::helper::{JsonValue, LockedState};
+use crate::helper::{JsonValue, LockedState, Uuid};
 use crate::message::Message;
 use crate::peer::Peer;
 
@@ -60,6 +60,7 @@ pub enum Requests {
     #[serde(rename = "sync_get_servers")] SyncGetServersRequest,
     #[serde(rename = "leave")]            LeaveRequest,
     #[serde(rename = "get_user")]         GetUserRequest,
+    #[serde(rename = "edit")]             EditRequest,
 }
 
 #[derive(Serialize)]
@@ -78,12 +79,15 @@ pub enum Response {
     #[serde(rename = "list_channels")]    ListChannelsResponse { data: Vec<Channel> },
     #[serde(rename = "get_emoji")]        GetEmojiResponse { data: Emoji },
     #[serde(rename = "list_emoji")]       ListEmojiResponse { data: Vec<(String, i64)> },
+    #[serde(rename = "send")]             SendResponse { message: Uuid },
+    #[serde(rename = "message_edited")]   MessageEditedResponse { message: Uuid, new_content: String },
 
     #[serde(rename = "content")]
-    SendResponse {
+    ContentResponse {
         #[serde(flatten)]
         message: Message,
     },
+
 
     #[serde(rename = "sync_get")]
     SyncGetResponse {
