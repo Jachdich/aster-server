@@ -24,7 +24,6 @@ CREATE TABLE groups (
     name text NOT NULL,
     colour integer NOT NULL
 );
-CREATE TABLE sqlite_sequence(name,seq);
 CREATE TABLE user_groups (
     link_id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_uuid BigInt NOT NULL,
