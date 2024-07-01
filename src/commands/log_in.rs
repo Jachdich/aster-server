@@ -100,16 +100,20 @@ impl Request for NickRequest {
             return Ok(GenericResponse(Status::Forbidden));
         }
 
-        Ok(match state_lock.get_user(&peer.uuid.unwrap())? {
-            Some(mut user) => {
-                user.name = self.nick.to_string();
+        // do not allow registering a duplicate username
+        if state_lock.get_user_by_name(&self.nick).is_ok_and(|x| x.is_some()) {
+            return Ok(GenericResponse(Status::Conflict));
+        }
 
-                state_lock.update_user(user)?;
-                send_metadata(state_lock, peer);
-                GenericResponse(Status::Ok)
-            }
-            None => GenericResponse(Status::NotFound),
-        })
+        let Some(mut user) = state_lock.get_user(&peer.uuid.unwrap())? else {
+            return Ok(GenericResponse(Status::NotFound));
+        };
+
+        user.name = self.nick.to_string();
+
+        state_lock.update_user(user)?;
+        send_metadata(state_lock, peer);
+        Ok(GenericResponse(Status::Ok))
     }
 }
 

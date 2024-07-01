@@ -30,6 +30,11 @@ impl Request for RegisterRequest {
             return Ok(GenericResponse(Status::MethodNotAllowed));
         }
 
+        // do not allow registering a duplicate username
+        if state_lock.get_user_by_name(&self.uname).is_ok_and(|x| x.is_some()) {
+            return Ok(GenericResponse(Status::Conflict));
+        }
+
         let uuid = gen_uuid();
         let user = User {
             name: self.uname.to_owned(),

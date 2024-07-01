@@ -27,6 +27,7 @@ pub enum Status {
     Forbidden = 403,
     NotFound = 404,
     MethodNotAllowed = 405,
+    Conflict = 409,
 }
 
 impl Serialize for Status {
