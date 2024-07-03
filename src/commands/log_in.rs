@@ -198,6 +198,12 @@ impl Request for PfpRequest {
         if !peer.logged_in() {
             return Ok(GenericResponse(Status::Forbidden));
         }
+
+        // disallow profile pictures over 40kb, for now
+        if self.data.len() > 40 * 1024 {
+            return Ok(GenericResponse(Status::BadRequest))
+        }
+
         match state_lock.get_user(&peer.uuid.unwrap())? {
             Some(mut user) => {
                 user.pfp = self.data.to_string();
