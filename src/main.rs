@@ -22,6 +22,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::task::Context;
 use std::task::Poll;
+use std::fs::File;
 
 pub mod commands;
 pub mod helper;
@@ -108,8 +109,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
     log::info!("Listening on {}", &addr);
 
     // TLS stuff, disable for testing
-    let der = include_bytes!("../identity.pfx");
-    let cert = native_tls::Identity::from_pkcs12(der, "").unwrap();
+    let mut f = File::open("fullchain.pem").expect("Unable to read fullchain.pem file");
+    let mut chain: Vec<u8> = Vec::new();
+    f.read_to_end(&mut chain).unwrap();
+    let mut f = File::open("privkey.pem").expect("Unable to read privkey.pem file");
+    let mut key: Vec<u8> = Vec::new();
+    f.read_to_end(&mut key).unwrap();
+    let cert = native_tls::Identity::from_pkcs8(&chain, &key).unwrap();
 
     let tls_acceptor = tokio_native_tls::TlsAcceptor::from(
         native_tls::TlsAcceptor::builder(cert).build().unwrap(),
