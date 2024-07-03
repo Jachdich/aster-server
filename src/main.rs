@@ -11,7 +11,7 @@ use serde_json::json;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, ReadBuf};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Mutex;
-// use tokio_native_tls::TlsStream;
+use tokio_native_tls::TlsStream;
 use tokio_stream::StreamExt;
 use tokio_util::codec::{Framed, LinesCodec};
 
@@ -39,7 +39,9 @@ use shared::Shared;
 const API_VERSION: [u8; 3] = [0, 1, 0]; // major, minor, patch
 
 //DEBUG
-type SocketStream = TcpStream;
+// type SocketStream = TcpStream;
+
+type SocketStream = TlsStream<TcpStream>;
 
 #[derive(Deserialize)]
 pub struct Config {
@@ -106,25 +108,24 @@ async fn main() -> Result<(), Box<dyn Error>> {
     log::info!("Listening on {}", &addr);
 
     // TLS stuff, disable for testing
-    /*
     let der = include_bytes!("../identity.pfx");
     let cert = native_tls::Identity::from_pkcs12(der, "").unwrap();
 
     let tls_acceptor = tokio_native_tls::TlsAcceptor::from(
         native_tls::TlsAcceptor::builder(cert).build().unwrap(),
-    );*/
+    );
 
     loop {
         let (stream, addr) = listener.accept().await?;
         log::info!("Got connection from {}", &addr);
-        // let tls_acceptor = tls_acceptor.clone();
+        let tls_acceptor = tls_acceptor.clone();
 
         let state = Arc::clone(&state);
 
         tokio::spawn(async move {
-            // let tls_stream = tls_acceptor.accept(stream).await.expect("Accept error");
+            let tls_stream = tls_acceptor.accept(stream).await.expect("Accept error");
             let mut peer = Peer::new(addr);
-            if let Err(e) = process(Arc::clone(&state), /*tls_*/ stream, &mut peer).await {
+            if let Err(e) = process(Arc::clone(&state), tls_stream, &mut peer).await {
                 log::error!("An error occurred in the connection:\n{:?}", e);
             }
             log::info!("Lost connection from {}", &addr);
