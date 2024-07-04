@@ -66,7 +66,7 @@ pub struct EditRequest {
 
 #[derive(Deserialize)]
 pub struct PasswordChangeRequest {
-    pub new_passwd: String,
+    pub new_password: String,
 }
 
 impl Request for PasswordChangeRequest {
@@ -77,7 +77,7 @@ impl Request for PasswordChangeRequest {
         let Some(mut user) = state_lock.get_user(&peer.uuid.unwrap())? else {
             return Ok(GenericResponse(Status::NotFound));
         };
-        user.password = make_hash(&self.new_passwd)?;
+        user.password = make_hash(&self.new_password)?;
         state_lock.update_user(&user)?;
 
         Ok(GenericResponse(Status::Ok))
