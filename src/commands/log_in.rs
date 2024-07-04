@@ -14,6 +14,8 @@ use crate::{
 use diesel::prelude::*;
 use serde::Deserialize;
 
+use super::auth::make_hash;
+
 #[derive(Deserialize)]
 pub struct SendRequest {
     pub content: String,
@@ -62,6 +64,26 @@ pub struct EditRequest {
     pub new_content: String,
 }
 
+#[derive(Deserialize)]
+pub struct PasswordChangeRequest {
+    pub new_passwd: String,
+}
+
+impl Request for PasswordChangeRequest {
+    fn execute(&self, state_lock: &mut LockedState, peer: &mut Peer) -> Result<Response, CmdError> {
+        if !peer.logged_in() {
+            return Ok(GenericResponse(Status::MethodNotAllowed));
+        }
+        let Some(mut user) = state_lock.get_user(&peer.uuid.unwrap())? else {
+            return Ok(GenericResponse(Status::NotFound));
+        };
+        user.password = make_hash(&self.new_passwd)?;
+        state_lock.update_user(&user)?;
+
+        Ok(GenericResponse(Status::Ok))
+    }
+}
+
 impl Request for EditRequest {
     fn execute(&self, state_lock: &mut LockedState, peer: &mut Peer) -> Result<Response, CmdError> {
         if !peer.logged_in() {
@@ -101,7 +123,10 @@ impl Request for NickRequest {
         }
 
         // do not allow registering a duplicate username
-        if state_lock.get_user_by_name(&self.nick).is_ok_and(|x| x.is_some()) {
+        if state_lock
+            .get_user_by_name(&self.nick)
+            .is_ok_and(|x| x.is_some())
+        {
             return Ok(GenericResponse(Status::Conflict));
         }
 
@@ -111,7 +136,7 @@ impl Request for NickRequest {
 
         user.name = self.nick.to_string();
 
-        state_lock.update_user(user)?;
+        state_lock.update_user(&user)?;
         send_metadata(state_lock, peer);
         Ok(GenericResponse(Status::Ok))
     }
@@ -201,14 +226,14 @@ impl Request for PfpRequest {
 
         // disallow profile pictures over 40kb, for now
         if self.data.len() > 40 * 1024 {
-            return Ok(GenericResponse(Status::BadRequest))
+            return Ok(GenericResponse(Status::BadRequest));
         }
 
         match state_lock.get_user(&peer.uuid.unwrap())? {
             Some(mut user) => {
                 user.pfp = self.data.to_string();
 
-                state_lock.update_user(user)?;
+                state_lock.update_user(&user)?;
                 send_metadata(state_lock, peer);
                 Ok(GenericResponse(Status::Ok))
             }

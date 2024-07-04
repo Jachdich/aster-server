@@ -72,6 +72,7 @@ table! {
         name -> Text,
         pfp -> Text,
         group_uuid -> BigInt,
+        password -> Text,
     }
 }
 

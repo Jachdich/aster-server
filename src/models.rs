@@ -19,6 +19,7 @@ pub struct User {
     pub name: String,
     pub pfp: String,
     pub group_uuid: i64,
+    pub password: String, // hashed, don't you worry
 }
 
 #[derive(Queryable, Insertable, Clone, Serialize, Deserialize)]

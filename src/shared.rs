@@ -191,12 +191,13 @@ impl Shared {
             .execute(&mut self.conn)
     }
 
-    pub fn update_user(&mut self, user: User) -> Result<usize, diesel::result::Error> {
+    pub fn update_user(&mut self, user: &User) -> Result<usize, diesel::result::Error> {
         diesel::update(schema::users::table.find(user.uuid))
             .set((
-                schema::users::name.eq(user.name),
-                schema::users::pfp.eq(user.pfp),
+                schema::users::name.eq(&user.name),
+                schema::users::pfp.eq(&user.pfp),
                 schema::users::group_uuid.eq(user.group_uuid),
+                schema::users::password.eq(&user.password),
             ))
             .execute(&mut self.conn)
     }

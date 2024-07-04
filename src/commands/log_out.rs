@@ -10,6 +10,8 @@ use crate::CONF;
 
 use serde::Deserialize;
 
+use super::auth::{check_password, make_hash};
+
 #[derive(Deserialize)]
 pub struct RegisterRequest {
     pub passwd: String,
@@ -36,7 +38,10 @@ impl Request for RegisterRequest {
         }
 
         // do not allow registering a duplicate username
-        if state_lock.get_user_by_name(&self.uname).is_ok_and(|x| x.is_some()) {
+        if state_lock
+            .get_user_by_name(&self.uname)
+            .is_ok_and(|x| x.is_some())
+        {
             return Ok(GenericResponse(Status::Conflict));
         }
 
@@ -46,6 +51,7 @@ impl Request for RegisterRequest {
             pfp: CONF.default_pfp.to_owned(),
             uuid,
             group_uuid: 0,
+            password: make_hash(&self.passwd)?,
         };
 
         state_lock.insert_user(user)?;
@@ -67,30 +73,35 @@ impl Request for LoginRequest {
             return Ok(GenericResponse(Status::MethodNotAllowed));
         }
 
-        let uuid = if let Some(uname) = &self.uname {
-            if let Some(user) = state_lock.get_user_by_name(uname)? {
-                user.uuid
-            } else {
-                return Ok(GenericResponse(Status::NotFound));
-            }
+        let user = if let Some(uname) = &self.uname {
+            state_lock.get_user_by_name(uname)?
         } else if let Some(uuid) = self.uuid {
-            uuid
+            state_lock.get_user(&uuid)?
         } else {
             //neither uname nor uuid were provided
             return Ok(GenericResponse(Status::BadRequest));
         };
 
-        // check the uuid exists
-        if state_lock.get_user(&uuid)?.is_none() {
+        // check the user exists
+        let Some(mut user) = user else {
             return Ok(GenericResponse(Status::NotFound));
+        };
+
+        // TODO temporarily allow users without passwords to log in
+        if user.password.is_empty() {
+            user.password = make_hash(&self.passwd)?;
+            state_lock.update_user(&user)?;
+        } else {
+            if !check_password(&self.passwd, &user.password)? {
+                return Ok(GenericResponse(Status::Forbidden));
+            }
         }
 
-        //TODO confirm password
-        peer.uuid = Some(uuid);
+        peer.uuid = Some(user.uuid);
 
-        state_lock.inc_online(uuid);
+        state_lock.inc_online(user.uuid);
         send_metadata(state_lock, peer);
         send_online(state_lock);
-        Ok(LoginResponse { uuid })
+        Ok(LoginResponse { uuid: user.uuid })
     }
 }

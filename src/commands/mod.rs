@@ -62,6 +62,7 @@ pub enum Requests {
     #[serde(rename = "leave")]            LeaveRequest,
     #[serde(rename = "get_user")]         GetUserRequest,
     #[serde(rename = "edit")]             EditRequest,
+    #[serde(rename = "change_password")]  PasswordChangeRequest,
 }
 
 #[derive(Serialize)]
@@ -126,7 +127,6 @@ fn send_metadata(state_lock: &mut LockedState, peer: &Peer) {
         }
     }
 }
-
 
 // naming: this name makes sense because
 // I think this function is beautiful

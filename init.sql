@@ -16,6 +16,7 @@ CREATE TABLE users (
     name text NOT NULL,
     pfp text NOT NULL,
     group_uuid BigInt NOT NULL,
+    password text NOT NULL,
     FOREIGN KEY (group_uuid) REFERENCES groups(uuid)
 );
 CREATE TABLE groups (
