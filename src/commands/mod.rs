@@ -62,6 +62,7 @@ pub enum Requests {
     #[serde(rename = "leave")]            LeaveRequest,
     #[serde(rename = "get_user")]         GetUserRequest,
     #[serde(rename = "edit")]             EditRequest,
+    #[serde(rename = "delete")]           DeleteRequest,
     #[serde(rename = "change_password")]  PasswordChangeRequest,
 }
 
@@ -83,6 +84,7 @@ pub enum Response {
     #[serde(rename = "list_emoji")]       ListEmojiResponse { data: Vec<(String, i64)> },
     #[serde(rename = "send")]             SendResponse { message: Uuid },
     #[serde(rename = "message_edited")]   MessageEditedResponse { message: Uuid, new_content: String },
+    #[serde(rename = "message_deleted")]  MessageDeletedResponse { message: Uuid },
 
     #[serde(rename = "content")]
     ContentResponse {

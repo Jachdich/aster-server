@@ -65,6 +65,11 @@ pub struct EditRequest {
 }
 
 #[derive(Deserialize)]
+pub struct DeleteRequest {
+    pub message: Uuid,
+}
+
+#[derive(Deserialize)]
 pub struct PasswordChangeRequest {
     pub new_password: String,
 }
@@ -106,6 +111,33 @@ impl Request for EditRequest {
         let msg = Response::MessageEditedResponse {
             message: self.message,
             new_content: self.new_content.clone(),
+        };
+
+        let mut msg_json = serde_json::to_value(msg)?;
+        msg_json["status"] = (Status::Ok as i32).into();
+        state_lock.send_to_all(msg_json)?;
+
+        Ok(GenericResponse(Status::Ok))
+    }
+}
+
+impl Request for DeleteRequest {
+    fn execute(&self, state_lock: &mut LockedState, peer: &mut Peer) -> Result<Response, CmdError> {
+        if !peer.logged_in() {
+            return Ok(GenericResponse(Status::Forbidden));
+        }
+        let Some(message) = state_lock.get_message(self.message)? else {
+            return Ok(GenericResponse(Status::NotFound));
+        };
+        if Some(message.author_uuid) != peer.uuid {
+            return Ok(GenericResponse(Status::Forbidden));
+        }
+
+        diesel::delete(schema::messages::table.filter(schema::messages::uuid.eq(self.message)))
+            .execute(&mut state_lock.conn)?;
+
+        let msg = Response::MessageDeletedResponse {
+            message: self.message,
         };
 
         let mut msg_json = serde_json::to_value(msg)?;
