@@ -88,8 +88,7 @@ impl Shared {
         Ok(self
             .get_channels()?
             .iter()
-            .find(|channel| channel.uuid == *uuid)
-            .is_some())
+            .any(|channel| channel.uuid == *uuid))
     }
 
     pub fn get_user(&mut self, user: &i64) -> Result<Option<User>, diesel::result::Error> {

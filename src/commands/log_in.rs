@@ -216,7 +216,7 @@ impl Request for SendRequest {
         let response = ContentResponse {
             message: msg.into(),
         };
-        let mut msg_json = serde_json::to_value(&response)?;
+        let mut msg_json = serde_json::to_value(response)?;
         msg_json["status"] = (Status::Ok as i32).into();
         state_lock.send_to_all(msg_json)?;
         Ok(SendResponse { message: uuid })
@@ -291,8 +291,8 @@ impl Request for SyncSetRequest {
             }
         };
 
-        sync_data.uname = self.uname.clone();
-        sync_data.pfp = self.pfp.clone();
+        sync_data.uname.clone_from(&self.uname);
+        sync_data.pfp.clone_from(&self.pfp);
 
         state_lock.update_sync_data(sync_data)?;
 
