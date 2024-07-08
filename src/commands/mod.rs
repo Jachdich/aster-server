@@ -182,6 +182,7 @@ pub fn process_command(
     state: &mut LockedState,
     peer: &mut Peer,
 ) -> Result<(), Box<dyn Error>> {
+    let a = std::time::Instant::now();
     let response = match serde_json::from_str::<JsonValue>(msg) {
         Ok(raw_request) => {
             let command = if raw_request["command"].is_string() {
@@ -189,6 +190,7 @@ pub fn process_command(
             } else {
                 "unknown".to_owned()
             };
+            print!("Request {}", command);
 
             match serde_json::from_value::<Requests>(raw_request) {
                 Ok(request) => execute_request(request, state, peer, &command),
@@ -201,7 +203,9 @@ pub fn process_command(
             json!({"command": "unknown", "status": Status::BadRequest as i32})
         }
     };
-    println!("Got request '{}' and responded with '{:?}'", msg, response);
+    // println!("Got request '{}' and responded with '{:?}'", msg, response);
     peer.tx.send(response)?;
+    let d = a.elapsed();
+    println!(" took {}µs to respond", d.as_micros());
     Ok(())
 }

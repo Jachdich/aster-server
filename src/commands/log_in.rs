@@ -246,6 +246,9 @@ impl Request for HistoryRequest {
             .limit(self.num.into())
             .load::<Message>(&mut state_lock.conn)?;
         history.reverse();
+
+        // simulate some lag
+        // std::thread::sleep(std::time::Duration::from_secs(2));
         Ok(HistoryResponse { data: history })
     }
 }
