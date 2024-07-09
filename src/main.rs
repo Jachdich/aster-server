@@ -17,12 +17,12 @@ use tokio_util::codec::{Framed, LinesCodec};
 
 use futures::SinkExt;
 use std::error::Error;
+use std::fs::File;
 use std::io::Read;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::Context;
 use std::task::Poll;
-use std::fs::File;
 
 pub mod commands;
 pub mod helper;
@@ -53,6 +53,8 @@ pub struct Config {
     pub name: String,
     pub icon: String,
     pub database_file: String,
+    pub certificate_chain: String,
+    pub private_key: String,
 }
 
 fn read_b64(fname: &str) -> Option<String> {
@@ -109,13 +111,17 @@ async fn main() -> Result<(), Box<dyn Error>> {
     log::info!("Listening on {}", &addr);
 
     // TLS stuff, disable for testing
-    let mut f = File::open("fullchain.pem").expect("Unable to read fullchain.pem file");
+    let mut f = File::open(&CONF.certificate_chain).expect("Unable to read certificate chain file");
     let mut chain: Vec<u8> = Vec::new();
-    f.read_to_end(&mut chain).unwrap();
-    let mut f = File::open("privkey.pem").expect("Unable to read privkey.pem file");
+    f.read_to_end(&mut chain)
+        .expect("Unable to understand the certificate chain. Is it in the right format?");
+    let mut f = File::open(&CONF.private_key).expect("Unable to read private key file");
     let mut key: Vec<u8> = Vec::new();
-    f.read_to_end(&mut key).unwrap();
-    let cert = native_tls::Identity::from_pkcs8(&chain, &key).unwrap();
+    f.read_to_end(&mut key)
+        .expect("Unable to understand the private key. Is it in the right format?");
+    let cert = native_tls::Identity::from_pkcs8(&chain, &key).expect(
+        "Unable to create TLS identity. Are your certificate and private key valid and correct?",
+    );
 
     let tls_acceptor = tokio_native_tls::TlsAcceptor::from(
         native_tls::TlsAcceptor::builder(cert).build().unwrap(),
@@ -153,9 +159,16 @@ async fn main() -> Result<(), Box<dyn Error>> {
     }
 }
 
+// hang on hang on I can explain
+// so basically i have to read the first character of the stream
+// to deterime whether it is a websocket connection or a raw socket connection
+// however, TlsStream doesn't implement `.peek()`. Hmph. So I had to do this
+// attrosity: ShittyStream basically just wraps the stream, implementing
+// AsyncRead and AsyncWrite, but the very first character that gets read
+// is the one that we read from the original stream in the first place.
+// This is a cry for help, please I don't know how to go on
 struct ShittyStream {
     c: char,
-    // s: TlsStream<TcpStream>,
     s: SocketStream,
 }
 
@@ -222,21 +235,13 @@ async fn process(
     }
     let first_char = char::from_u32(buf[0] as u32).unwrap();
 
-    // hang on hang on I can explain
-    // so basically i have to read the first character of the stream
-    // to deterime whether it is a websocket connection or a raw socket connection
-    // however, TlsStream doesn't implement `.peek()`. Hmph. So I had to do this
-    // attrosity: ShittyStream basically just wraps the stream, implementing
-    // AsyncRead and AsyncWrite, but the very first character that gets read
-    // is the one that we read from the original stream in the first place.
-    // This is a cry for help, please I don't know how to go on
     let stream_with_first_char = ShittyStream {
         c: first_char,
         s: stream,
     };
 
     if first_char == '{' {
-        //JSON shit
+        // Start of a JSON packet, we're using raw sockets
         let mut lines = Framed::new(stream_with_first_char, LinesCodec::new());
 
         loop {
