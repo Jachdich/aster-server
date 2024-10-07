@@ -90,6 +90,14 @@ impl Shared {
             .iter()
             .any(|channel| channel.uuid == *uuid))
     }
+    pub fn message_exists(&mut self, uuid: &Uuid) -> Result<bool, diesel::result::Error> {
+        // TODO this might be slow
+        Ok(!schema::messages::table
+            .filter(schema::messages::uuid.eq(uuid))
+            .limit(1)
+            .load::<Message>(&mut self.conn)?
+            .is_empty())
+    }
 
     pub fn get_user(&mut self, user: &i64) -> Result<Option<User>, diesel::result::Error> {
         let mut results = schema::users::table

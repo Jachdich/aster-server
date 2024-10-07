@@ -11,6 +11,7 @@ pub struct Message {
     pub channel_uuid: i64,
     pub date: i32,
     pub edited: bool,
+    pub reply: Option<i64>,
     #[serde(skip)]
     pub rowid: i32,
 }
@@ -24,6 +25,7 @@ pub struct NewMessage {
     pub channel_uuid: i64,
     pub date: i32,
     pub edited: bool,
+    pub reply: Option<i64>,
 }
 
 // TODO this is slightly dubious: why zero rowid?
@@ -36,6 +38,7 @@ impl From<NewMessage> for Message {
             channel_uuid: message.channel_uuid,
             date: message.date,
             edited: message.edited,
+            reply: message.reply,
             rowid: 0,
         }
     }

@@ -32,6 +32,7 @@ table! {
         channel_uuid -> BigInt,
         date -> Integer,
         edited -> Bool,
+        reply -> Nullable<BigInt>,
         rowid -> Integer,
     }
 }

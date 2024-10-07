@@ -20,6 +20,7 @@ use super::auth::make_hash;
 pub struct SendRequest {
     pub content: String,
     pub channel: i64,
+    pub reply: Option<i64>,
 }
 #[derive(Deserialize)]
 pub struct HistoryRequest {
@@ -201,6 +202,14 @@ impl Request for SendRequest {
             return Ok(GenericResponse(Status::NotFound));
         }
 
+        // check if we're replying to a message that it exists
+        if let Some(r) = self.reply {
+            let exists = state_lock.message_exists(&r)?;
+            if !exists {
+                return Ok(GenericResponse(Status::NotFound));
+            }
+        }
+
         let msg = NewMessage {
             uuid: gen_uuid(),
             content: self.content.to_owned(),
@@ -208,6 +217,7 @@ impl Request for SendRequest {
             channel_uuid: self.channel,
             date: chrono::offset::Utc::now().timestamp() as i32,
             edited: false,
+            reply: self.reply,
         };
         state_lock.add_to_history(&msg)?;
 
