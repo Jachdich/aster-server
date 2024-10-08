@@ -102,12 +102,7 @@ impl Request for EditRequest {
             return Ok(GenericResponse(Status::Forbidden));
         }
 
-        diesel::update(schema::messages::table.filter(schema::messages::uuid.eq(message.uuid)))
-            .set((
-                schema::messages::content.eq(self.new_content.as_str()),
-                schema::messages::edited.eq(true),
-            ))
-            .execute(&mut state_lock.conn)?;
+        state_lock.edit_message(message.uuid, self.new_content.as_str())?;
 
         let msg = Response::MessageEditedResponse {
             message: self.message,
@@ -134,8 +129,7 @@ impl Request for DeleteRequest {
             return Ok(GenericResponse(Status::Forbidden));
         }
 
-        diesel::delete(schema::messages::table.filter(schema::messages::uuid.eq(self.message)))
-            .execute(&mut state_lock.conn)?;
+        state_lock.delete_message(self.message)?;
 
         let msg = Response::MessageDeletedResponse {
             message: self.message,
@@ -332,11 +326,7 @@ impl Request for SyncSetServersRequest {
             return Ok(GenericResponse(Status::Forbidden));
         }
 
-        diesel::delete(
-            schema::sync_servers::table
-                .filter(schema::sync_servers::user_uuid.eq(peer.uuid.unwrap())),
-        )
-        .execute(&mut state_lock.conn)?;
+        state_lock.clear_sync_servers_of(peer.uuid.unwrap())?;
 
         for (idx, sync_server) in self.servers.iter().enumerate() {
             let mut server = sync_server.clone();
@@ -354,15 +344,7 @@ impl Request for SyncGetServersRequest {
         if !peer.logged_in() {
             return Ok(GenericResponse(Status::Forbidden));
         }
-        let servers = schema::sync_servers::table
-            .filter(schema::sync_servers::user_uuid.eq(peer.uuid.unwrap()))
-            .order(schema::sync_servers::idx.asc())
-            .load::<SyncServerQuery>(&mut state_lock.conn)?;
-
-        let servers = servers
-            .into_iter()
-            .map(SyncServer::from)
-            .collect::<Vec<SyncServer>>();
+        let servers = state_lock.get_sync_servers(peer.uuid.unwrap())?;
 
         Ok(SyncGetServersResponse { servers })
     }

@@ -77,31 +77,19 @@ impl Request for ListChannelsRequest {
 
 impl Request for GetEmojiRequest {
     fn execute(&self, state_lock: &mut LockedState, _: &mut Peer) -> Result<Response, CmdError> {
-        let mut results = schema::emojis::table
-            .filter(schema::emojis::uuid.eq(self.uuid))
-            .limit(1)
-            .load::<Emoji>(&mut state_lock.conn)
-            .unwrap();
-        if results.is_empty() {
-            Ok(GenericResponse(Status::NotFound))
+        let data = state_lock.get_emoji(self.uuid)?;
+        if let Some(data) = data {
+            Ok(GetEmojiResponse { data })
         } else {
-            Ok(GetEmojiResponse {
-                data: results.remove(0),
-            })
+            Ok(GenericResponse(Status::NotFound))
         }
     }
 }
 
 impl Request for ListEmojiRequest {
     fn execute(&self, state_lock: &mut LockedState, _: &mut Peer) -> Result<Response, CmdError> {
-        let results = schema::emojis::table
-            .load::<Emoji>(&mut state_lock.conn)
-            .unwrap();
         Ok(ListEmojiResponse {
-            data: results
-                .iter()
-                .map(|res| (res.name.clone(), res.uuid))
-                .collect::<Vec<(String, i64)>>(),
+            data: state_lock.list_emoji()?,
         })
     }
 }
