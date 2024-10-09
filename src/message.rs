@@ -1,9 +1,6 @@
-use crate::schema::messages;
-use diesel::{Insertable, Queryable};
 use serde::{Deserialize, Serialize};
 
-#[derive(Queryable, Clone, Debug, Serialize, Deserialize)]
-#[diesel(table_name = messages)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Message {
     pub uuid: i64,
     pub content: String,
@@ -14,32 +11,4 @@ pub struct Message {
     pub reply: Option<i64>,
     #[serde(skip)]
     pub rowid: i32,
-}
-
-#[derive(Insertable, Clone, Debug, Serialize, Deserialize)]
-#[diesel(table_name = messages)]
-pub struct NewMessage {
-    pub uuid: i64,
-    pub content: String,
-    pub author_uuid: i64,
-    pub channel_uuid: i64,
-    pub date: i32,
-    pub edited: bool,
-    pub reply: Option<i64>,
-}
-
-// TODO this is slightly dubious: why zero rowid?
-impl From<NewMessage> for Message {
-    fn from(message: NewMessage) -> Self {
-        Self {
-            uuid: message.uuid,
-            content: message.content,
-            author_uuid: message.author_uuid,
-            channel_uuid: message.channel_uuid,
-            date: message.date,
-            edited: message.edited,
-            reply: message.reply,
-            rowid: 0,
-        }
-    }
 }

@@ -13,20 +13,18 @@ tokio-stream = { version = "0.1" }
 tokio-tungstenite = "*"
 tokio-native-tls = "*"
 native-tls = "0.2.11"
-
-# tracing = "0.1"
-# tracing-subscriber = { version = "0.2.7", default-features = false, features = ["fmt", "ansi", "env-filter", "chrono", "tracing-log"] }
 bytes = "1.0.0"
-futures = { version = "0.3.0", features = ["thread-pool"]}
 rand = "*"
 base64 = "*"
-diesel = { version = "*", features = ["sqlite", "numeric"]}
 chrono = "*"
 lazy_static = "*"
 serde = { version = "1.0", features = ["derive"] }
-argon2 = "*"
 serde_json = "1.0"
+argon2 = "*"
 enum_dispatch = "0.3.8"
 log = "0.4.18"
 env_logger = "0.10.0"
 anyhow = "1.0.71"
+rusqlite = "0.32.1"
+futures = "0.3.31"
+

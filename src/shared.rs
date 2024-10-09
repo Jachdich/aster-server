@@ -3,29 +3,30 @@ use crate::message::*;
 use crate::models::*;
 use crate::schema;
 use crate::CONF;
-use diesel::prelude::*;
+use rusqlite::Connection;
 use std::collections::HashMap;
 use tokio::sync::mpsc;
 
 pub struct Shared {
     pub online: HashMap<i64, u32>,
-    pub conn: SqliteConnection,
+    pub conn: Connection,
     pub peers: Vec<(
         mpsc::UnboundedSender<serde_json::Value>,
         std::net::SocketAddr,
     )>,
 }
 
-type DbError = diesel::result::Error;
+type DbError = rusqlite::Error;
 
 impl Shared {
     pub fn new() -> Self {
-        let sqlitedb = SqliteConnection::establish(&CONF.database_file).unwrap_or_else(|_| {
-            panic!(
-                "Fatal(Shared::new) connecting to the database file {}",
-                &CONF.database_file
-            )
-        });
+        // let sqlitedb = SqliteConnection::establish(&CONF.database_file).unwrap_or_else(|_| {
+        //     panic!(
+        //         "Fatal(Shared::new) connecting to the database file {}",
+        //         &CONF.database_file
+        //     )
+        // });
+        let sqlitedb = Connection::open_in_memory().expect("Unable to create a DB?");
 
         Shared {
             online: HashMap::new(),
@@ -48,9 +49,6 @@ impl Shared {
         message: serde_json::Value,
     ) -> Result<(), tokio::sync::mpsc::error::SendError<serde_json::Value>> {
         for (tx, _) in self.peers.iter() {
-            // if let Err(e) = tx.send(message.clone()) {
-            //     println!("Error(Shared::send_to_all): I think this is unlikely but `peer.tx.send` failed. idk bug me to fix it ig. {:?}", e);
-            // }
             tx.send(message.clone())?;
         }
         Ok(())
@@ -64,17 +62,30 @@ impl Shared {
         self.online.insert(user, orig_count + 1);
     }
 
-    //TODO WHAT??
-    // fn save(&mut self) {
-    //
-    // }
-
     pub fn get_user_by_name(&mut self, name: &str) -> Result<Option<User>, DbError> {
-        let mut query_res = schema::users::table
-            .filter(schema::users::name.eq(name))
-            .limit(1)
-            .load::<User>(&mut self.conn)?;
-        Ok(query_res.pop())
+        // let mut query_res = schema::users::table
+        //     .filter(schema::users::name.eq(name))
+        //     .limit(1)
+        //     .load::<User>(&mut self.conn)?;
+        // Ok(query_res.pop())
+
+        let mut smt = self
+            .conn
+            .prepare("SELECT * FROM users WHERE name = ?1 LIMIT 1")?;
+
+        let res = smt
+            .query_map([name], |row| {
+                Ok(User {
+                    uuid: row.get(0)?,
+                    name: row.get(1)?,
+                    pfp: row.get(2)?,
+                    group_uuid: row.get(3)?,
+                    password: row.get(4)?,
+                })
+            })?
+            .next()
+            .transpose(); // next returns Option<Result<...>>, however it makes more sense to return Result<Option<...>>
+        res // don't question why res needs to be a variable...
     }
 
     pub fn get_users(&mut self) -> Result<Vec<User>, DbError> {

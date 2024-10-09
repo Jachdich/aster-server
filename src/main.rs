@@ -1,6 +1,5 @@
 // #![deny(warnings)]
 
-extern crate diesel;
 extern crate lazy_static;
 extern crate tokio;
 
