@@ -63,12 +63,6 @@ impl Shared {
     }
 
     pub fn get_user_by_name(&mut self, name: &str) -> Result<Option<User>, DbError> {
-        // let mut query_res = schema::users::table
-        //     .filter(schema::users::name.eq(name))
-        //     .limit(1)
-        //     .load::<User>(&mut self.conn)?;
-        // Ok(query_res.pop())
-
         let mut smt = self
             .conn
             .prepare("SELECT * FROM users WHERE name = ?1 LIMIT 1")?;
@@ -89,11 +83,30 @@ impl Shared {
     }
 
     pub fn get_users(&mut self) -> Result<Vec<User>, DbError> {
-        schema::users::table.load::<User>(&mut self.conn)
+        self.conn
+            .prepare("SELECT * FROM USERS")?
+            .query_map([], |row| {
+                Ok(User {
+                    uuid: row.get(0)?,
+                    name: row.get(1)?,
+                    pfp: row.get(2)?,
+                    group_uuid: row.get(3)?,
+                    password: row.get(4)?,
+                })
+            })?
+            .collect()
     }
 
     pub fn get_channels(&mut self) -> Result<Vec<Channel>, DbError> {
-        schema::channels::table.load::<Channel>(&mut self.conn)
+        self.conn
+            .prepare("SELECT * FROM CHANNELS")?
+            .query_map([], |row| {
+                Ok(Channel {
+                    uuid: row.get(0)?,
+                    name: row.get(1)?,
+                })
+            })?
+            .collect()
     }
 
     pub fn channel_exists(&mut self, uuid: &Uuid) -> Result<bool, DbError> {
