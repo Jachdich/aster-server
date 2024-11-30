@@ -1,6 +1,6 @@
 use crate::helper::{gen_uuid, LockedState};
-use crate::message::{Message, NewMessage};
-use crate::models::{SyncData, SyncServer, SyncServerQuery};
+use crate::message::Message;
+use crate::models::{SyncData, SyncServer};
 use crate::peer::Peer;
 use crate::schema;
 use crate::{
@@ -11,7 +11,6 @@ use crate::{
     },
     helper::Uuid,
 };
-use diesel::prelude::*;
 use serde::Deserialize;
 
 use super::auth::make_hash;
@@ -204,7 +203,7 @@ impl Request for SendRequest {
             }
         }
 
-        let msg = NewMessage {
+        let msg = Message {
             uuid: gen_uuid(),
             content: self.content.to_owned(),
             author_uuid: peer.uuid.unwrap(),
@@ -235,20 +234,16 @@ impl Request for HistoryRequest {
         if state_lock.get_channel(&self.channel)?.is_none() {
             return Ok(GenericResponse(Status::NotFound));
         }
-        let init_rowid = if let Some(uuid) = self.before_message {
-            let init_msg = schema::messages::table
-                .filter(schema::messages::uuid.eq(uuid))
-                .first::<Message>(&mut state_lock.conn)?;
-            init_msg.rowid
-        } else {
-            i32::MAX
+
+        // history request may fail if before_message is not found. If that happens, catch this and return 404 not 500.
+        let mut history = match state_lock.get_history(self.channel, self.num, self.before_message)
+        {
+            Ok(history) => history,
+            Err(rusqlite::Error::QueryReturnedNoRows) => {
+                return Ok(GenericResponse(Status::NotFound))
+            }
+            Err(e) => return Err(e.into()),
         };
-        let mut history = schema::messages::table
-            .filter(schema::messages::channel_uuid.eq(self.channel))
-            .filter(schema::messages::rowid.lt(init_rowid))
-            .order(schema::messages::rowid.desc())
-            .limit(self.num.into())
-            .load::<Message>(&mut state_lock.conn)?;
         history.reverse();
 
         // simulate some lag

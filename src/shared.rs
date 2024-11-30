@@ -208,7 +208,6 @@ impl Shared {
                     date: row.get(4)?,
                     edited: row.get(5)?,
                     reply: row.get(6)?,
-                    rowid: row.get(7)?,
                 })
             })
             .optional()
@@ -318,67 +317,138 @@ impl Shared {
         //         schema::users::password.eq(&user.password),
         //     ))
         //     .execute(&mut self.conn)
-        self.conn.prepare("update idk how update statements work")
+        self.conn
+            .prepare("update users set name = ?1, pfp = ?2, group_uuid = ?3, password = ?4 where uuid = ?5")?
+            .execute(params![user.name, user.pfp, user.group_uuid, user.password, user.uuid])
     }
 
     pub fn update_sync_data(&mut self, data: SyncData) -> Result<usize, DbError> {
-        diesel::update(schema::sync_data::table.find(data.user_uuid))
-            .set((
-                schema::sync_data::uname.eq(data.uname),
-                schema::sync_data::pfp.eq(data.pfp),
-            ))
-            .execute(&mut self.conn)
+        // diesel::update(schema::sync_data::table.find(data.user_uuid))
+        //     .set((
+        //         schema::sync_data::uname.eq(data.uname),
+        //         schema::sync_data::pfp.eq(data.pfp),
+        //     ))
+        //     .execute(&mut self.conn)
+        self.conn
+            .prepare("update sync_data set uname = ?1, pfp = ?2 where uuid = ?3")?
+            .execute(params![data.uname, data.pfp, data.user_uuid])
     }
 
     pub fn get_emoji(&mut self, uuid: Uuid) -> Result<Option<Emoji>, DbError> {
-        let mut results = schema::emojis::table
-            .filter(schema::emojis::uuid.eq(uuid))
-            .limit(1)
-            .load::<Emoji>(&mut self.conn)?;
-        if results.is_empty() {
-            Ok(None)
-        } else {
-            Ok(Some(results.remove(0)))
-        }
+        // let mut results = schema::emojis::table
+        //     .filter(schema::emojis::uuid.eq(uuid))
+        //     .limit(1)
+        //     .load::<Emoji>(&mut self.conn)?;
+        // if results.is_empty() {
+        //     Ok(None)
+        // } else {
+        //     Ok(Some(results.remove(0)))
+        // }
+        self.conn
+            .prepare("select * from emojis where uuid = ?1")?
+            .query_row([uuid], |row| {
+                Ok(Emoji {
+                    uuid: row.get(0)?,
+                    name: row.get(1)?,
+                    data: row.get(2)?,
+                })
+            })
+            .optional()
     }
 
     pub fn list_emoji(&mut self) -> Result<Vec<(String, Uuid)>, DbError> {
-        let results = schema::emojis::table.load::<Emoji>(&mut self.conn)?;
-        Ok(results
-            .into_iter()
-            .map(|res| (res.name, res.uuid))
-            .collect::<Vec<(String, Uuid)>>())
+        // let results = schema::emojis::table.load::<Emoji>(&mut self.conn)?;
+        // Ok(results
+        //     .into_iter()
+        //     .map(|res| (res.name, res.uuid))
+        //     .collect::<Vec<(String, Uuid)>>())
+
+        self.conn
+            .prepare("select name, uuid from emojis")?
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .collect()
     }
 
     pub fn edit_message(&mut self, uuid: Uuid, new_content: &str) -> Result<usize, DbError> {
-        diesel::update(schema::messages::table.filter(schema::messages::uuid.eq(uuid)))
-            .set((
-                schema::messages::content.eq(new_content),
-                schema::messages::edited.eq(true),
-            ))
-            .execute(&mut self.conn)
+        // diesel::update(schema::messages::table.filter(schema::messages::uuid.eq(uuid)))
+        //     .set((
+        //         schema::messages::content.eq(new_content),
+        //         schema::messages::edited.eq(true),
+        //     ))
+        //     .execute(&mut self.conn)
+        self.conn
+            .prepare("update messages set content = ?1, edited = true where uuid = ?2")?
+            .execute(params![new_content, uuid])
     }
 
     pub fn delete_message(&mut self, uuid: Uuid) -> Result<usize, DbError> {
-        diesel::delete(schema::messages::table.filter(schema::messages::uuid.eq(uuid)))
-            .execute(&mut self.conn)
+        // diesel::delete(schema::messages::table.filter(schema::messages::uuid.eq(uuid)))
+        //     .execute(&mut self.conn)
+        self.conn
+            .prepare("delete from messages where uuid = ?1")?
+            .execute([uuid])
     }
 
     pub fn clear_sync_servers_of(&mut self, user: Uuid) -> Result<usize, DbError> {
-        diesel::delete(schema::sync_servers::table.filter(schema::sync_servers::user_uuid.eq(user)))
-            .execute(&mut self.conn)
+        // diesel::delete(schema::sync_servers::table.filter(schema::sync_servers::user_uuid.eq(user)))
+        //     .execute(&mut self.conn)
+        self.conn
+            .prepare("delete from sync_servers where user_uuid = ?1")?
+            .execute([user])
     }
 
     pub fn get_sync_servers(&mut self, user: Uuid) -> Result<Vec<SyncServer>, DbError> {
-        schema::sync_servers::table
-            .filter(schema::sync_servers::user_uuid.eq(user))
-            .order(schema::sync_servers::idx.asc())
-            .load::<SyncServerQuery>(&mut self.conn)
-            .map(|servers| {
-                servers
-                    .into_iter()
-                    .map(SyncServer::from)
-                    .collect::<Vec<SyncServer>>()
-            })
+        // schema::sync_servers::table
+        //     .filter(schema::sync_servers::user_uuid.eq(user))
+        //     .order(schema::sync_servers::idx.asc())
+        //     .load::<SyncServerQuery>(&mut self.conn)
+        //     .map(|servers| {
+        //         servers
+        //             .into_iter()
+        //             .map(SyncServer::from)
+        //             .collect::<Vec<SyncServer>>()
+        //     })
+        self.conn
+            .prepare("select * from sync_servers where user_uuid = ?1 order by idx")?
+            .query_map([user], |row| {
+                Ok(SyncServer {
+                    user_uuid: row.get(0)?,
+                    uuid: row.get(0)?,
+                    uname: row.get(2)?,
+                    ip: row.get(3)?,
+                    port: row.get(4)?,
+                    pfp: row.get(5)?,
+                    name: row.get(6)?,
+                    idx: row.get(7)?,
+                })
+            })?
+            .collect()
+    }
+
+    pub fn get_history(
+        &mut self,
+        channel: Uuid,
+        num: u32,
+        before_message: Option<Uuid>,
+    ) -> Result<Vec<Message>, DbError> {
+        let init_rowid = if let Some(uuid) = before_message {
+            self.conn
+                .prepare("select rowid from messages where uuid = ?1")?
+                .query_row([uuid], |row| row.get(0))?
+        } else {
+            i32::MAX
+        };
+        self.conn.prepare("select * from messages where channel_uuid = ?1 and rowid < ?2 order by rowid limit ?3")?
+            .query_map(params![channel, init_rowid, num], |row|
+                Ok(Message {
+                    uuid: row.get(0)?,
+                    content: row.get(1)?,
+                    author_uuid: row.get(2)?,
+                    channel_uuid: row.get(3)?,
+                    date: row.get(4)?,
+                    edited: row.get(5)?,
+                    reply: row.get(6)?,
+                })
+            )?.collect()
     }
 }
