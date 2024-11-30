@@ -9,6 +9,4 @@ pub struct Message {
     pub date: i32,
     pub edited: bool,
     pub reply: Option<i64>,
-    #[serde(skip)]
-    pub rowid: i32,
 }

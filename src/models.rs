@@ -52,8 +52,6 @@ pub struct SyncServer {
     pub pfp: Option<String>,
     pub name: Option<String>,
     pub idx: i32,
-    #[serde(skip)]
-    pub rowid: i32,
 }
 
 #[derive(Clone, Serialize)]

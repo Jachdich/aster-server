@@ -8,7 +8,6 @@ use crate::models::Emoji;
 use crate::schema;
 use crate::Peer;
 use crate::CONF;
-use diesel::prelude::*;
 use serde::Deserialize;
 
 #[derive(Deserialize)]
