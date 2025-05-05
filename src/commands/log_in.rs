@@ -2,7 +2,6 @@ use crate::helper::{gen_uuid, LockedState};
 use crate::message::Message;
 use crate::models::{SyncData, SyncServer};
 use crate::peer::Peer;
-use crate::schema;
 use crate::{
     commands::{
         send_metadata, CmdError, Request,
@@ -18,13 +17,13 @@ use super::auth::make_hash;
 #[derive(Deserialize)]
 pub struct SendRequest {
     pub content: String,
-    pub channel: i64,
+    pub channel: Uuid,
     pub reply: Option<i64>,
 }
 #[derive(Deserialize)]
 pub struct HistoryRequest {
     pub num: u32,
-    pub channel: i64,
+    pub channel: Uuid,
     pub before_message: Option<i64>,
 }
 
@@ -74,8 +73,25 @@ pub struct PasswordChangeRequest {
     pub new_password: String,
 }
 
+#[derive(Deserialize)]
+pub struct CreateChannelRequest {
+    pub channel_name: String,
+}
+
+#[derive(Deserialize)] 
+pub struct DeleteChannelRequest {
+    pub channel: Uuid,
+}
+
+#[derive(Deserialize)]
+pub struct UpdateChannelRequest {
+    pub channel: Uuid,
+    pub name: String,
+    pub position: usize,
+}
+
 impl Request for PasswordChangeRequest {
-    fn execute(&self, state_lock: &mut LockedState, peer: &mut Peer) -> Result<Response, CmdError> {
+    fn execute(self, state_lock: &mut LockedState, peer: &mut Peer) -> Result<Response, CmdError> {
         if !peer.logged_in() {
             return Ok(GenericResponse(Status::MethodNotAllowed));
         }
@@ -90,7 +106,7 @@ impl Request for PasswordChangeRequest {
 }
 
 impl Request for EditRequest {
-    fn execute(&self, state_lock: &mut LockedState, peer: &mut Peer) -> Result<Response, CmdError> {
+    fn execute(self, state_lock: &mut LockedState, peer: &mut Peer) -> Result<Response, CmdError> {
         if !peer.logged_in() {
             return Ok(GenericResponse(Status::Forbidden));
         }
@@ -105,7 +121,7 @@ impl Request for EditRequest {
 
         let msg = Response::MessageEditedResponse {
             message: self.message,
-            new_content: self.new_content.clone(),
+            new_content: self.new_content,
         };
 
         let mut msg_json = serde_json::to_value(msg)?;
@@ -117,7 +133,7 @@ impl Request for EditRequest {
 }
 
 impl Request for DeleteRequest {
-    fn execute(&self, state_lock: &mut LockedState, peer: &mut Peer) -> Result<Response, CmdError> {
+    fn execute(self, state_lock: &mut LockedState, peer: &mut Peer) -> Result<Response, CmdError> {
         if !peer.logged_in() {
             return Ok(GenericResponse(Status::Forbidden));
         }
@@ -143,7 +159,7 @@ impl Request for DeleteRequest {
 }
 
 impl Request for NickRequest {
-    fn execute(&self, state_lock: &mut LockedState, peer: &mut Peer) -> Result<Response, CmdError> {
+    fn execute(self, state_lock: &mut LockedState, peer: &mut Peer) -> Result<Response, CmdError> {
         if !peer.logged_in() {
             return Ok(GenericResponse(Status::Forbidden));
         }
@@ -160,7 +176,7 @@ impl Request for NickRequest {
             return Ok(GenericResponse(Status::NotFound));
         };
 
-        user.name = self.nick.to_string();
+        user.name = self.nick;
 
         state_lock.update_user(&user)?;
         send_metadata(state_lock, peer);
@@ -169,7 +185,7 @@ impl Request for NickRequest {
 }
 
 impl Request for OnlineRequest {
-    fn execute(&self, state_lock: &mut LockedState, peer: &mut Peer) -> Result<Response, CmdError> {
+    fn execute(self, state_lock: &mut LockedState, peer: &mut Peer) -> Result<Response, CmdError> {
         if !peer.logged_in() {
             return Ok(GenericResponse(Status::Forbidden));
         }
@@ -181,7 +197,7 @@ impl Request for OnlineRequest {
 }
 
 impl Request for SendRequest {
-    fn execute(&self, state_lock: &mut LockedState, peer: &mut Peer) -> Result<Response, CmdError> {
+    fn execute(self, state_lock: &mut LockedState, peer: &mut Peer) -> Result<Response, CmdError> {
         if !peer.logged_in() {
             return Ok(GenericResponse(Status::Forbidden));
         }
@@ -205,7 +221,7 @@ impl Request for SendRequest {
 
         let msg = Message {
             uuid: gen_uuid(),
-            content: self.content.to_owned(),
+            content: self.content,
             author_uuid: peer.uuid.unwrap(),
             channel_uuid: self.channel,
             date: chrono::offset::Utc::now().timestamp() as i32,
@@ -227,7 +243,7 @@ impl Request for SendRequest {
 }
 
 impl Request for HistoryRequest {
-    fn execute(&self, state_lock: &mut LockedState, peer: &mut Peer) -> Result<Response, CmdError> {
+    fn execute(self, state_lock: &mut LockedState, peer: &mut Peer) -> Result<Response, CmdError> {
         if !peer.logged_in() {
             return Ok(GenericResponse(Status::Forbidden));
         }
@@ -253,7 +269,7 @@ impl Request for HistoryRequest {
 }
 
 impl Request for PfpRequest {
-    fn execute(&self, state_lock: &mut LockedState, peer: &mut Peer) -> Result<Response, CmdError> {
+    fn execute(self, state_lock: &mut LockedState, peer: &mut Peer) -> Result<Response, CmdError> {
         if !peer.logged_in() {
             return Ok(GenericResponse(Status::Forbidden));
         }
@@ -265,7 +281,7 @@ impl Request for PfpRequest {
 
         match state_lock.get_user(&peer.uuid.unwrap())? {
             Some(mut user) => {
-                user.pfp = self.data.to_string();
+                user.pfp = self.data;
 
                 state_lock.update_user(&user)?;
                 send_metadata(state_lock, peer);
@@ -279,7 +295,7 @@ impl Request for PfpRequest {
 }
 
 impl Request for SyncSetRequest {
-    fn execute(&self, state_lock: &mut LockedState, peer: &mut Peer) -> Result<Response, CmdError> {
+    fn execute(self, state_lock: &mut LockedState, peer: &mut Peer) -> Result<Response, CmdError> {
         if !peer.logged_in() {
             return Ok(GenericResponse(Status::Forbidden));
         }
@@ -293,8 +309,8 @@ impl Request for SyncSetRequest {
             }
         };
 
-        sync_data.uname.clone_from(&self.uname);
-        sync_data.pfp.clone_from(&self.pfp);
+        sync_data.uname = self.uname;
+        sync_data.pfp = self.pfp;
 
         state_lock.update_sync_data(sync_data)?;
 
@@ -303,7 +319,7 @@ impl Request for SyncSetRequest {
 }
 
 impl Request for SyncGetRequest {
-    fn execute(&self, state_lock: &mut LockedState, peer: &mut Peer) -> Result<Response, CmdError> {
+    fn execute(self, state_lock: &mut LockedState, peer: &mut Peer) -> Result<Response, CmdError> {
         if !peer.logged_in() {
             return Ok(GenericResponse(Status::Forbidden));
         }
@@ -316,7 +332,7 @@ impl Request for SyncGetRequest {
     }
 }
 impl Request for SyncSetServersRequest {
-    fn execute(&self, state_lock: &mut LockedState, peer: &mut Peer) -> Result<Response, CmdError> {
+    fn execute(self, state_lock: &mut LockedState, peer: &mut Peer) -> Result<Response, CmdError> {
         if !peer.logged_in() {
             return Ok(GenericResponse(Status::Forbidden));
         }
@@ -335,7 +351,7 @@ impl Request for SyncSetServersRequest {
 }
 
 impl Request for SyncGetServersRequest {
-    fn execute(&self, state_lock: &mut LockedState, peer: &mut Peer) -> Result<Response, CmdError> {
+    fn execute(self, state_lock: &mut LockedState, peer: &mut Peer) -> Result<Response, CmdError> {
         if !peer.logged_in() {
             return Ok(GenericResponse(Status::Forbidden));
         }

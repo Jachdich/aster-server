@@ -31,7 +31,9 @@ impl Shared {
         // });
         let sqlitedb = Connection::open_in_memory().expect("Unable to create a DB?");
 
-        sqlitedb.execute_batch(r#"
+        sqlitedb
+            .execute_batch(
+                r#"
 BEGIN;
 CREATE TABLE channels (
     uuid BigInt PRIMARY KEY NOT NULL,
@@ -90,7 +92,9 @@ CREATE TABLE sync_servers (
     idx Integer NOT NULL,
     rowid Integer NOT NULL PRIMARY KEY
 );
-COMMIT;"#).unwrap();
+COMMIT;"#,
+            )
+            .unwrap();
 
         Shared {
             online: HashMap::new(),
@@ -447,6 +451,12 @@ COMMIT;"#).unwrap();
         //     .execute(&mut self.conn)
         self.conn
             .prepare("delete from messages where uuid = ?1")?
+            .execute([uuid])
+    }
+
+    pub fn delete_channel(&mut self, uuid: Uuid) -> Result<usize, DbError> {
+        self.conn
+            .prepare("delete from channels where uuid = ?1")?
             .execute([uuid])
     }
 

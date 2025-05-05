@@ -8,7 +8,7 @@ use log_any::*;
 use log_in::*;
 use log_out::*;
 
-use crate::helper::{JsonValue, LockedState, Uuid};
+use crate::helper::{gen_uuid, JsonValue, LockedState, Uuid};
 use crate::message::Message;
 use crate::peer::Peer;
 
@@ -64,6 +64,9 @@ pub enum Requests {
     #[serde(rename = "edit")]             EditRequest,
     #[serde(rename = "delete")]           DeleteRequest,
     #[serde(rename = "change_password")]  PasswordChangeRequest,
+    #[serde(rename = "create_channel")]   CreateChannelRequest,
+    #[serde(rename = "delete_channel")]   DeleteChannelRequest,
+    #[serde(rename = "update_channel")]   UpdateChannelRequest,
 }
 
 #[derive(Serialize)]
@@ -109,7 +112,45 @@ use Response::*;
 
 #[enum_dispatch(Requests)]
 pub trait Request {
-    fn execute(&self, state_lock: &mut LockedState, peer: &mut Peer) -> Result<Response, CmdError>;
+    fn execute(self, state_lock: &mut LockedState, peer: &mut Peer) -> Result<Response, CmdError>;
+}
+
+fn update_channels(state_lock: &mut LockedState) -> Result<(), CmdError> {
+    let channels = state_lock.get_channels()?;
+    let mut packet = serde_json::to_value(ListChannelsResponse { data: channels })?;
+    packet["status"] = (Status::Ok as i32).into();
+    state_lock.send_to_all(packet)?;
+    Ok(())
+}
+
+impl Request for CreateChannelRequest {
+    fn execute(self, state_lock: &mut LockedState, peer: &mut Peer) -> Result<Response, CmdError> {
+        if !peer.logged_in() {
+            return Ok(GenericResponse(Status::Forbidden));
+        }
+        state_lock.insert_channel(Channel { uuid: gen_uuid(), name: self.channel_name })?;
+        update_channels(state_lock)?;
+        Ok(GenericResponse(Status::Ok))
+    }
+}
+impl Request for DeleteChannelRequest {
+    fn execute(self, state_lock: &mut LockedState, peer: &mut Peer) -> Result<Response, CmdError> {
+        if !peer.logged_in() {
+            return Ok(GenericResponse(Status::Forbidden));
+        }
+        state_lock.delete_channel(self.channel)?;
+        update_channels(state_lock)?;
+        Ok(GenericResponse(Status::Ok))
+    }
+}
+impl Request for UpdateChannelRequest {
+    fn execute(self, state_lock: &mut LockedState, peer: &mut Peer) -> Result<Response, CmdError> {
+        if !peer.logged_in() {
+            return Ok(GenericResponse(Status::Forbidden));
+        }
+        update_channels(state_lock)?;
+        Ok(GenericResponse(Status::Ok))
+    }
 }
 
 fn send_metadata(state_lock: &mut LockedState, peer: &Peer) {
@@ -130,9 +171,7 @@ fn send_metadata(state_lock: &mut LockedState, peer: &Peer) {
     }
 }
 
-// naming: this name makes sense because
-// I think this function is beautiful
-pub fn zuza(state_lock: &LockedState) -> Vec<i64> {
+pub fn count_online(state_lock: &LockedState) -> Vec<i64> {
     state_lock
         .online
         .iter()
@@ -142,7 +181,7 @@ pub fn zuza(state_lock: &LockedState) -> Vec<i64> {
 }
 
 pub fn send_online(state_lock: &LockedState) {
-    let num_online = zuza(state_lock);
+    let num_online = count_online(state_lock);
 
     let mut final_json = serde_json::to_value(OnlineResponse { data: num_online }).unwrap(); // unwrap ok because OnlineResponse derives Serialize, and it does not contain any maps
     final_json["status"] = (Status::Ok as i32).into(); // to make sure the client doesn't panic...
