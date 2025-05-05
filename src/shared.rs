@@ -19,22 +19,16 @@ pub struct Shared {
 }
 
 type DbError = rusqlite::Error;
+const LATEST_VERSION: i32 = 3;
 
-impl Shared {
-    pub fn new() -> Self {
-        // todo!("Check the schema!!");
-        // let sqlitedb = SqliteConnection::establish(&CONF.database_file).unwrap_or_else(|_| {
-        //     panic!(
-        //         "Fatal(Shared::new) connecting to the database file {}",
-        //         &CONF.database_file
-        //     )
-        // });
-        let sqlitedb = Connection::open_in_memory().expect("Unable to create a DB?");
-
-        sqlitedb
-            .execute_batch(
-                r#"
+fn latest_schema() -> String {
+    format!(
+        r#"
 BEGIN;
+CREATE TABLE version (
+    version integer NOT NULL
+);
+INSERT INTO version VALUES({});
 CREATE TABLE channels (
     uuid BigInt PRIMARY KEY NOT NULL,
     name text NOT NULL
@@ -93,8 +87,90 @@ CREATE TABLE sync_servers (
     rowid Integer NOT NULL PRIMARY KEY
 );
 COMMIT;"#,
-            )
-            .unwrap();
+        LATEST_VERSION
+    )
+}
+
+struct Migration {
+    from: i32,
+    to: i32,
+    sql: &'static str,
+}
+
+const MIGRATIONS: &[Migration] = &[
+    Migration {
+        from: 1,
+        to: 2,
+        sql: r#"
+BEGIN;
+UPDATE version SET version=2;
+COMMIT;
+        "#,
+    },
+    Migration {
+        from: 2,
+        to: 3,
+        sql: r#"
+BEGIN;
+UPDATE version SET version=3;
+COMMIT;
+        "#,
+    },
+];
+
+impl Shared {
+    pub fn new() -> Self {
+        todo!("Check the schema!! + test migrations PROPERLY + implement permissions (look at commit messages)");
+        // let sqlitedb = SqliteConnection::establish(&CONF.database_file).unwrap_or_else(|_| {
+        //     panic!(
+        //         "Fatal(Shared::new) connecting to the database file {}",
+        //         &CONF.database_file
+        //     )
+        // });
+        let sqlitedb = Connection::open_in_memory().expect("Unable to create a DB?");
+
+        // TODO unwrap....
+        let table_exists = sqlitedb
+            .prepare("SELECT name FROM sqlite_master WHERE type=?1 AND name=?2")
+            .unwrap()
+            .query_row(["table", "version"], |_| Ok(()))
+            .optional()
+            .unwrap()
+            .is_some();
+
+        let mut version = if table_exists {
+            let mut version_query = sqlitedb
+                .prepare("SELECT * FROM version")
+                .expect("Database failure to prepare version query");
+            let version: Result<i32, DbError> = version_query.query_row([], |row| row.get(0));
+
+            drop(version_query);
+
+            version
+                .unwrap_or_else(|e| panic!("Unable to read version for some other reason: {:?}", e))
+        } else {
+            sqlitedb.execute_batch(&latest_schema()).unwrap();
+            LATEST_VERSION
+        };
+
+        while version < LATEST_VERSION {
+            let applicable_migrations: Vec<_> =
+                MIGRATIONS.iter().filter(|m| m.from == version).collect();
+            if applicable_migrations.len() == 0 {
+                panic!(
+                    "Unable to find a migration from db version {} (latest version is {})",
+                    version, LATEST_VERSION
+                );
+            }
+
+            let m = applicable_migrations[0];
+            println!("Applying migration from db version {} to {}", m.from, m.to);
+            sqlitedb.execute_batch(m.sql).expect(&format!(
+                "Failed to apply migration from db version {} to {}",
+                m.from, m.to
+            ));
+            version = m.to;
+        }
 
         Shared {
             online: HashMap::new(),
