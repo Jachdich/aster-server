@@ -26,7 +26,7 @@ pub struct LoginRequest {
 }
 
 impl Request for RegisterRequest {
-    fn execute(&self, state_lock: &mut LockedState, peer: &mut Peer) -> Result<Response, CmdError> {
+    fn execute(self, state_lock: &mut LockedState, peer: &mut Peer) -> Result<Response, CmdError> {
         if peer.logged_in() {
             //registering doesn't make sense when logged in
             return Ok(GenericResponse(Status::MethodNotAllowed));
@@ -47,7 +47,7 @@ impl Request for RegisterRequest {
 
         let uuid = gen_uuid();
         let user = User {
-            name: self.uname.to_owned(),
+            name: self.uname,
             pfp: CONF.default_pfp.to_owned(),
             uuid,
             group_uuid: 0,
@@ -67,7 +67,7 @@ impl Request for RegisterRequest {
 }
 
 impl Request for LoginRequest {
-    fn execute(&self, state_lock: &mut LockedState, peer: &mut Peer) -> Result<Response, CmdError> {
+    fn execute(self, state_lock: &mut LockedState, peer: &mut Peer) -> Result<Response, CmdError> {
         if peer.logged_in() {
             //logging in doesn't make sense when already logged in
             return Ok(GenericResponse(Status::MethodNotAllowed));
