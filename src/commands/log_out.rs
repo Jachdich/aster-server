@@ -12,6 +12,12 @@ use serde::Deserialize;
 
 use super::auth::{check_password, make_hash};
 
+/// Create a new account with the given username and password. Returns a packet of type register with a field "uuid"
+/// containing the uuid of the newly created account.  
+/// Error conditions:
+/// - 409 (conflict) if the username already exists within the server.
+/// - 400 (bad request) if the username is empty or entirely whitespace.
+/// - 405 (method not allowed) if already logged in.
 #[derive(Deserialize)]
 pub struct RegisterRequest {
     pub passwd: String,

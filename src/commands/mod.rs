@@ -35,6 +35,37 @@ impl Serialize for Status {
         serializer.serialize_i32(*self as i32)
     }
 }
+/// # API Docs
+/// For documentation of each packet, its fields, and when it may be sent; see its respective struct's documentation.
+/// ## Overview
+/// The API uses json objects to communicate. Each packet consists of a json string on one line, followed by
+/// a newline character indicating the end of the packet. The json string must contain a "command" property
+/// which is the packet type. The server must respond to this packet with at least one packet with the same
+/// value in its "command" field, and a "status" field containing one of a subset of HTTP status codes to
+/// indicate whether the command succeeded or not. An example packet may look like this:
+/// ```text
+/// '{"command": "ping"}\n'
+/// ```
+/// To which the server will respond:
+/// ```text
+/// '{"command": "ping", "status": 200}\n'
+/// ```
+/// To indicate the command succeeded. Extra data required for most commands will be supplied as additional
+/// properties in the same json string. For example, a login packet may look like this:
+/// ```text
+/// {"command": "login", "uname": "User1", "passwd": "12345"}
+/// ```
+/// To which the server may respond
+/// ```text
+/// {"command": "login", "status": 403}
+/// ```
+/// To indicate the password is incorrect.
+
+/// ## Events
+/// The server may send a subset of the possible reply packets without a corresponding request. These can be
+/// thought of as events, where the server is notifying the client of a change that said client did not initiate
+/// itself. For example, if a new user logs in, all other clients will automatically be sent an "online" packet
+/// with the new list of online clients.
 
 #[enum_dispatch]
 #[derive(Deserialize)]
