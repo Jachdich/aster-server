@@ -83,6 +83,7 @@ pub struct DeleteChannelRequest {
     pub channel: Uuid,
 }
 
+/// Position is new position channel should take. Updates all other channel positions to allow this.
 #[derive(Deserialize)]
 pub struct UpdateChannelRequest {
     pub channel: Uuid,

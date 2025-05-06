@@ -126,7 +126,7 @@ COMMIT;
 
 impl Shared {
     pub fn new(sqlitedb: Connection) -> Self {
-        // todo!("Check the schema!! + test migrations PROPERLY + implement permissions (look at commit messages)");
+        todo!("test migrations PROPERLY + implement permissions (look at commit messages)");
 
         // TODO unwrap....
         let table_exists = sqlitedb
