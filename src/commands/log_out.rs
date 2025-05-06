@@ -76,7 +76,7 @@ impl Request for LoginRequest {
         let user = if let Some(uname) = &self.uname {
             state_lock.get_user_by_name(uname)?
         } else if let Some(uuid) = self.uuid {
-            state_lock.get_user(&uuid)?
+            state_lock.get_user(uuid)?
         } else {
             //neither uname nor uuid were provided
             return Ok(GenericResponse(Status::BadRequest));

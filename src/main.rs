@@ -36,7 +36,7 @@ use crate::commands::send_online;
 use peer::Peer;
 use shared::Shared;
 
-const API_VERSION: [u8; 3] = [0, 1, 0]; // major, minor, patch
+const API_VERSION: [u8; 3] = [0, 2, 0]; // major, minor, patch
 
 //DEBUG
 // type SocketStream = TcpStream;
@@ -97,12 +97,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let mut builder = env_logger::Builder::from_default_env();
     builder.filter_level(log::LevelFilter::Info).init();
 
-    let state = Arc::new(Mutex::new(Shared::new()));
-
-    {
-        let mut state = state.lock().await;
-        state.load();
-    }
+    let sqlitedb = rusqlite::Connection::open(&CONF.database_file).unwrap_or_else(|_| {
+        panic!(
+            "Fatal(Shared::new) connecting to the database file {}",
+            &CONF.database_file
+        )
+    });
+    let state = Arc::new(Mutex::new(Shared::new(sqlitedb)));
 
     let addr = format!("{}:{}", &CONF.addr, CONF.port);
 

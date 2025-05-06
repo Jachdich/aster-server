@@ -64,9 +64,9 @@ pub enum Requests {
     #[serde(rename = "edit")]             EditRequest,
     #[serde(rename = "delete")]           DeleteRequest,
     #[serde(rename = "change_password")]  PasswordChangeRequest,
-    #[serde(rename = "create_channel")]   CreateChannelRequest,
-    #[serde(rename = "delete_channel")]   DeleteChannelRequest,
-    #[serde(rename = "update_channel")]   UpdateChannelRequest,
+    // #[serde(rename = "create_channel")]   CreateChannelRequest,
+    // #[serde(rename = "delete_channel")]   DeleteChannelRequest,
+    // #[serde(rename = "update_channel")]   UpdateChannelRequest,
 }
 
 #[derive(Serialize)]
@@ -115,47 +115,86 @@ pub trait Request {
     fn execute(self, state_lock: &mut LockedState, peer: &mut Peer) -> Result<Response, CmdError>;
 }
 
-fn update_channels(state_lock: &mut LockedState) -> Result<(), CmdError> {
-    let channels = state_lock.get_channels()?;
-    let mut packet = serde_json::to_value(ListChannelsResponse { data: channels })?;
-    packet["status"] = (Status::Ok as i32).into();
-    state_lock.send_to_all(packet)?;
-    Ok(())
-}
+// fn update_channels(state_lock: &mut LockedState) -> Result<(), CmdError> {
+//     let channels = state_lock.get_channels()?;
+//     let mut packet = serde_json::to_value(ListChannelsResponse { data: channels })?;
+//     packet["status"] = (Status::Ok as i32).into();
+//     state_lock.send_to_all(packet)?;
+//     Ok(())
+// }
 
-impl Request for CreateChannelRequest {
-    fn execute(self, state_lock: &mut LockedState, peer: &mut Peer) -> Result<Response, CmdError> {
-        if !peer.logged_in() {
-            return Ok(GenericResponse(Status::Forbidden));
-        }
-        state_lock.insert_channel(Channel { uuid: gen_uuid(), name: self.channel_name })?;
-        update_channels(state_lock)?;
-        Ok(GenericResponse(Status::Ok))
-    }
-}
-impl Request for DeleteChannelRequest {
-    fn execute(self, state_lock: &mut LockedState, peer: &mut Peer) -> Result<Response, CmdError> {
-        if !peer.logged_in() {
-            return Ok(GenericResponse(Status::Forbidden));
-        }
-        state_lock.delete_channel(self.channel)?;
-        update_channels(state_lock)?;
-        Ok(GenericResponse(Status::Ok))
-    }
-}
-impl Request for UpdateChannelRequest {
-    fn execute(self, state_lock: &mut LockedState, peer: &mut Peer) -> Result<Response, CmdError> {
-        if !peer.logged_in() {
-            return Ok(GenericResponse(Status::Forbidden));
-        }
-        update_channels(state_lock)?;
-        Ok(GenericResponse(Status::Ok))
-    }
-}
+// impl Request for CreateChannelRequest {
+//     fn execute(self, state_lock: &mut LockedState, peer: &mut Peer) -> Result<Response, CmdError> {
+//         if !peer.logged_in() {
+//             return Ok(GenericResponse(Status::Forbidden));
+//         }
+//         state_lock.insert_channel(Channel { uuid: gen_uuid(), name: self.channel_name })?;
+//         update_channels(state_lock)?;
+//         Ok(GenericResponse(Status::Ok))
+//     }
+// }
+// impl Request for DeleteChannelRequest {
+//     fn execute(self, state_lock: &mut LockedState, peer: &mut Peer) -> Result<Response, CmdError> {
+//         if !peer.logged_in() {
+//             return Ok(GenericResponse(Status::Forbidden));
+//         }
+//         state_lock.delete_channel(self.channel)?;
+//         update_channels(state_lock)?;
+//         Ok(GenericResponse(Status::Ok))
+//     }
+// }
+// impl Request for UpdateChannelRequest {
+//     fn execute(self, state_lock: &mut LockedState, peer: &mut Peer) -> Result<Response, CmdError> {
+//         if !peer.logged_in() {
+//             return Ok(GenericResponse(Status::Forbidden));
+//         }
+//         let channels = state_lock.get_channels()?;
+//         let Some(old_channel) = state_lock.get_channel(&self.channel)? else {
+//             return Ok(GenericResponse(Status::NotFound));
+//         };
+
+//         // unwrap ok, because we know there must be at least one channel as it exists
+//         if self.position > channels.last().unwrap().position {
+//             return Ok(GenericResponse(Status::BadRequest));
+//         }
+
+//         // recalculate channel positions, given the position of this channel
+//         // TODO maybe use a transaction...
+//         if old_channel.position < self.position {
+//             for c in channels {
+//                 if c.position > old_channel.position && c.position <= self.position {
+//                     state_lock.update_channel(&Channel {
+//                         uuid: c.uuid,
+//                         name: c.name,
+//                         position: c.position - 1,
+//                     })?;
+//                 }
+//             }
+//         } else if old_channel.position > self.position {
+//             for c in channels {
+//                 if c.position >= self.position && c.position < old_channel.position {
+//                     state_lock.update_channel(&Channel {
+//                         uuid: c.uuid,
+//                         name: c.name,
+//                         position: c.position + 1,
+//                     })?;
+//                 }
+//             }
+//         }
+//         state_lock.update_channel(&Channel {
+//             uuid: self.channel,
+//             name: self.name,
+//             position: self.position,
+//         })?;
+
+//         update_channels(state_lock)?;
+//         Ok(GenericResponse(Status::Ok))
+//     }
+// }
 
 fn send_metadata(state_lock: &mut LockedState, peer: &Peer) {
     if let Some(uuid) = peer.uuid {
-        match state_lock.get_user(&uuid) {
+        match state_lock.get_user(uuid) {
             Ok(Some(peer_meta)) => {
                 let meta = peer_meta;
                 let result =
