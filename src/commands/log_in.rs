@@ -95,7 +95,7 @@ impl Request for PasswordChangeRequest {
         if !peer.logged_in() {
             return Ok(GenericResponse(Status::MethodNotAllowed));
         }
-        let Some(mut user) = state_lock.get_user(&peer.uuid.unwrap())? else {
+        let Some(mut user) = state_lock.get_user(peer.uuid.unwrap())? else {
             return Ok(GenericResponse(Status::NotFound));
         };
         user.password = make_hash(&self.new_password)?;
@@ -172,7 +172,7 @@ impl Request for NickRequest {
             return Ok(GenericResponse(Status::Conflict));
         }
 
-        let Some(mut user) = state_lock.get_user(&peer.uuid.unwrap())? else {
+        let Some(mut user) = state_lock.get_user(peer.uuid.unwrap())? else {
             return Ok(GenericResponse(Status::NotFound));
         };
 
@@ -279,7 +279,7 @@ impl Request for PfpRequest {
             return Ok(GenericResponse(Status::BadRequest));
         }
 
-        match state_lock.get_user(&peer.uuid.unwrap())? {
+        match state_lock.get_user(peer.uuid.unwrap())? {
             Some(mut user) => {
                 user.pfp = self.data;
 

@@ -1,15 +1,15 @@
-use crate::helper::gen_uuid;
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, PartialEq, Debug, Serialize)]
 pub struct Channel {
     pub uuid: i64,
     pub name: String,
+    pub position: usize,
 }
 
 //message.rs for message models
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
 pub struct User {
     pub uuid: i64,
     pub name: String,
@@ -33,7 +33,7 @@ pub struct UserGroupConnection {
     pub group_uuid: i64,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, PartialEq, Debug, Serialize)]
 pub struct SyncData {
     #[serde(skip)]
     pub user_uuid: i64,
@@ -41,7 +41,7 @@ pub struct SyncData {
     pub pfp: String,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SyncServer {
     #[serde(skip)]
     pub user_uuid: i64,
@@ -73,16 +73,6 @@ impl SyncData {
             user_uuid: uuid,
             pfp: "".into(),
             uname: "".into(),
-        }
-    }
-}
-
-impl Channel {
-    pub fn new(name: &str) -> Self {
-        let uuid = gen_uuid();
-        Channel {
-            uuid,
-            name: name.to_string(),
         }
     }
 }

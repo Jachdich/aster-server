@@ -42,7 +42,7 @@ impl Request for GetMetadataRequest {
 
 impl Request for GetUserRequest {
     fn execute(self, state_lock: &mut LockedState, _: &mut Peer) -> Result<Response, CmdError> {
-        match state_lock.get_user(&self.uuid)? {
+        match state_lock.get_user(self.uuid)? {
             Some(peer_meta) => Ok(GetUserResponse { data: peer_meta }),
             None => Ok(GenericResponse(Status::NotFound)),
         }
