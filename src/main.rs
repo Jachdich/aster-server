@@ -15,6 +15,7 @@ use tokio_stream::StreamExt;
 use tokio_util::codec::{Framed, LinesCodec};
 
 use futures::SinkExt;
+use std::env;
 use std::error::Error;
 use std::fs::File;
 use std::io::Read;
@@ -97,12 +98,19 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let mut builder = env_logger::Builder::from_default_env();
     builder.filter_level(log::LevelFilter::Info).init();
 
-    let sqlitedb = rusqlite::Connection::open(&CONF.database_file).unwrap_or_else(|_| {
-        panic!(
-            "Fatal(Shared::new) connecting to the database file {}",
-            &CONF.database_file
-        )
-    });
+    let args: Vec<_> = env::args().collect();
+    let use_scratch_db = args.len() > 1 && args[1]  == "--scratch-db";
+
+    let sqlitedb = if use_scratch_db {
+        rusqlite::Connection::open_in_memory().unwrap()
+    } else {
+        rusqlite::Connection::open(&CONF.database_file).unwrap_or_else(|_| {
+            panic!(
+                "Fatal(Shared::new) connecting to the database file {}",
+                &CONF.database_file
+            )
+        })
+    };
     let state = Arc::new(Mutex::new(Shared::new(sqlitedb)));
 
     let addr = format!("{}:{}", &CONF.addr, CONF.port);
