@@ -97,6 +97,7 @@ struct Migration {
     from: i32,
     to: i32,
     sql: &'static str,
+    f: Option<fn(&Connection) -> Result<(), DbError>>,
 }
 
 const MIGRATIONS: &[Migration] = &[Migration {
@@ -118,88 +119,113 @@ CREATE TABLE sync_servers (
 INSERT INTO sync_servers SELECT user_uuid,uuid,uname,ip,port,pfp,name,idx FROM sync_servers_2;
 DROP TABLE sync_servers_2;
 
-UPDATE version SET version=2;
 ALTER TABLE channels ADD COLUMN position INTEGER NOT NULL DEFAULT 0;
 COMMIT;
         "#,
+    f: Some(|sqlitedb: &Connection| {
+        // order the channels by the order they currently appear.
+        for (i, uuid) in sqlitedb
+            .prepare("SELECT * FROM CHANNELS")?
+            .query_map([], |row| row.get(0))?
+            .enumerate()
+        {
+            let uuid: Uuid = uuid?;
+            sqlitedb
+                .prepare("UPDATE channels SET position=?1 WHERE uuid=?2")?
+                .execute(params![i, uuid])?;
+        }
+        Ok(())
+    }),
 }];
 
 impl Shared {
     pub fn new(sqlitedb: Connection) -> Self {
-        // todo!("test migrations PROPERLY + implement permissions (look at commit messages)");
+        Shared {
+            online: HashMap::new(),
+            conn: sqlitedb,
+            peers: Vec::new(),
+        }
+    }
 
-        // TODO unwrap....
-        let table_exists = sqlitedb
+    pub fn init_db(&self) {
+        let version = self.get_db_version();
+        let version = match version {
+            Some(version) => version,
+            None => {
+                self.init_tables(&latest_schema());
+                LATEST_VERSION
+            }
+        };
+
+        self.apply_migrations(MIGRATIONS, version, LATEST_VERSION);
+    }
+
+    fn get_db_version(&self) -> Option<i32> {
+        let table_exists = self
+            .conn
             .prepare("SELECT name FROM sqlite_master WHERE type=?1 AND name=?2")
             .unwrap()
             .query_row(["table", "version"], |_| Ok(()))
             .optional()
             .unwrap()
             .is_some();
-
-        let mut version = if table_exists {
-            let mut version_query = sqlitedb
+        if table_exists {
+            let mut version_query = self
+                .conn
                 .prepare("SELECT * FROM version")
                 .expect("Database failure to prepare version query");
             let version: Result<i32, DbError> = version_query.query_row([], |row| row.get(0));
 
             drop(version_query);
 
-            version
-                .unwrap_or_else(|e| panic!("Unable to read version for some other reason: {:?}", e))
+            Some(version.unwrap_or_else(|e| {
+                panic!("Unable to read version for some other reason: {:?}", e)
+            }))
         } else {
-            sqlitedb.execute_batch(&latest_schema()).unwrap();
-            LATEST_VERSION
-        };
+            None
+        }
+    }
 
-        while version < LATEST_VERSION {
-            let applicable_migrations: Vec<_> =
-                MIGRATIONS.iter().filter(|m| m.from == version).collect();
+    fn init_tables(&self, init_sql: &str) {
+        self.conn.execute_batch(init_sql).unwrap();
+    }
+
+    fn apply_migrations(
+        &self,
+        migrations: &[Migration],
+        mut current_version: i32,
+        latest_version: i32,
+    ) {
+        while current_version < latest_version {
+            let applicable_migrations: Vec<_> = migrations
+                .iter()
+                .filter(|m| m.from == current_version)
+                .collect();
             if applicable_migrations.len() == 0 {
                 panic!(
                     "Unable to find a migration from db version {} (latest version is {})",
-                    version, LATEST_VERSION
+                    current_version, latest_version
                 );
             }
 
             let m = applicable_migrations[0];
             log::info!("Applying migration from db version {} to {}", m.from, m.to);
-            sqlitedb.execute_batch(m.sql).expect(&format!(
+            self.conn.execute_batch(m.sql).expect(&format!(
                 "Failed to apply migration from db version {} to {}",
                 m.from, m.to
             ));
 
-            // special cases that require code to run
-            if m.from == 1 && m.to == 2 {
-                let mut i = 0;
-                for r in sqlitedb
-                    .prepare("SELECT * FROM CHANNELS")
-                    .unwrap()
-                    .query_map([], |row| {
-                        Ok(Channel {
-                            uuid: row.get(0)?,
-                            name: row.get(1)?,
-                            position: 0,
-                        })
-                    })
-                    .unwrap()
-                {
-                    let r = r.unwrap();
-                    sqlitedb
-                        .prepare("UPDATE channels SET position=?1 WHERE uuid=?2")
-                        .unwrap()
-                        .execute(params![i, r.uuid])
-                        .unwrap();
-                    i += 1;
-                }
+            if let Some(f) = m.f {
+                f(&self.conn).expect(&format!(
+                    "Failed to run post-migration hook from db version {} to {}",
+                    m.from, m.to
+                ));
             }
-            version = m.to;
-        }
 
-        Shared {
-            online: HashMap::new(),
-            conn: sqlitedb,
-            peers: Vec::new(),
+            current_version = m.to;
+            self.conn
+                .execute_batch(&format!("UPDATE version SET version={};", current_version))
+                .expect("Unable to update vesion in table");
         }
     }
 
@@ -367,7 +393,7 @@ impl Shared {
                 Ok(Channel {
                     uuid: row.get(0)?,
                     name: row.get(1)?,
-                    position: row.get(2)?
+                    position: row.get(2)?,
                 })
             })
             .optional()
@@ -518,9 +544,158 @@ impl Shared {
 mod tests {
     use super::*;
 
+    // TODO !!!!! improve / increase migration testing
+    #[test]
+    fn migration_simple() {
+        let init = r#"
+            BEGIN;
+            CREATE TABLE version (
+                version integer NOT NULL
+            );
+            INSERT INTO version VALUES(1);
+            COMMIT;
+        "#;
+        let migrations = &[Migration {
+            from: 1,
+            to: 2,
+            sql: r#"
+                CREATE TABLE users (
+                    uuid BigInt NOT NULL,
+                    name text NOT NULL
+                )
+                "#,
+            f: None,
+        }];
+        let sqlitedb = Connection::open_in_memory().expect("Unable to create a DB?");
+        let shared = Shared::new(sqlitedb);
+        shared.init_tables(init);
+        shared.apply_migrations(migrations, 1, 2);
+        assert_eq!(shared.get_db_version(), Some(2));
+        assert!(shared
+            .conn
+            .execute_batch("INSERT INTO users VALUES (1, \"hello world\")")
+            .is_ok());
+        let q: Result<(i64, String), _> = shared.conn.query_row("select * from users", [], |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        });
+
+        assert!(q.is_ok());
+        let r = q.unwrap();
+        assert_eq!(r.0, 1);
+        assert_eq!(r.1, "hello world");
+    }
+
+    #[test]
+    fn migration_with_hook() {
+        let init = r#"
+            BEGIN;
+            CREATE TABLE version (
+                version integer NOT NULL
+            );
+            INSERT INTO version VALUES(1);
+            COMMIT;
+        "#;
+        let migrations = &[Migration {
+            from: 1,
+            to: 2,
+            sql: r#"
+                CREATE TABLE users (
+                    uuid BigInt NOT NULL,
+                    name text NOT NULL
+                )
+                "#,
+            f: Some(|conn: &Connection| {
+                conn.execute_batch("insert into users values (2, \"hi\")")?;
+                Ok(())
+            }),
+        }];
+        let sqlitedb = Connection::open_in_memory().expect("Unable to create a DB?");
+        let shared = Shared::new(sqlitedb);
+        shared.init_tables(init);
+        shared.apply_migrations(migrations, 1, 2);
+        assert_eq!(shared.get_db_version(), Some(2));
+
+        let q: Result<(i64, String), _> = shared.conn.query_row("select * from users", [], |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        });
+
+        assert!(q.is_ok());
+        let r = q.unwrap();
+        assert_eq!(r.0, 2);
+        assert_eq!(r.1, "hi");
+    }
+    #[test]
+    fn multiple_migrations() {
+        let init = r#"
+            BEGIN;
+            CREATE TABLE version (
+                version integer NOT NULL
+            );
+            INSERT INTO version VALUES(1);
+            COMMIT;
+        "#;
+        let migrations = &[
+            Migration {
+                from: 1,
+                to: 2,
+                sql: r#"
+                CREATE TABLE users (
+                    uuid BigInt NOT NULL,
+                    name text NOT NULL
+                )
+                "#,
+                f: None,
+            },
+            Migration {
+                from: 2,
+                to: 3,
+                sql: r#"
+                CREATE TABLE messages (
+                    uuid BigInt NOT NULL,
+                    content text NOT NULL
+                )
+                "#,
+                f: Some(|conn: &Connection| {
+                    conn.execute_batch("insert into messages values (2, \"hi\")")?;
+                    Ok(())
+                }),
+            },
+        ];
+        let sqlitedb = Connection::open_in_memory().expect("Unable to create a DB?");
+        let shared = Shared::new(sqlitedb);
+        shared.init_tables(init);
+        shared.apply_migrations(migrations, 1, 3);
+
+        assert_eq!(shared.get_db_version(), Some(3));
+        assert!(shared
+            .conn
+            .execute_batch("INSERT INTO users VALUES (1, \"hello world\")")
+            .is_ok());
+
+        let q: Result<(i64, String), _> = shared.conn.query_row("select * from users", [], |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        });
+
+        assert!(q.is_ok());
+        let r = q.unwrap();
+        assert_eq!(r.0, 1);
+        assert_eq!(r.1, "hello world");
+
+        let q: Result<(i64, String), _> =
+            shared.conn.query_row("select * from messages", [], |row| {
+                Ok((row.get(0)?, row.get(1)?))
+            });
+
+        assert!(q.is_ok());
+        let r = q.unwrap();
+        assert_eq!(r.0, 2);
+        assert_eq!(r.1, "hi");
+    }
+
     fn init() -> Shared {
         let sqlitedb = Connection::open_in_memory().expect("Unable to create a DB?");
         let shared = Shared::new(sqlitedb);
+        shared.init_db();
         shared
     }
 
