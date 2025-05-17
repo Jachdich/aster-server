@@ -1,10 +1,41 @@
+use std::collections::HashMap;
+
 use serde::{Deserialize, Serialize};
+
+#[derive(Clone, PartialEq, Debug)]
+enum Perm {
+    Allow,
+    Deny,
+    Default,
+}
+
+#[derive(Clone, PartialEq, Debug)]
+struct ServerPerms {
+    manage_channels: Perm,
+    change_icon_name: Perm,
+    channel_perms: ChannelPerms,
+}
+
+#[derive(Clone, PartialEq, Debug)]
+struct ChannelPerms {
+    send_messages: Perm,
+    read_messages: Perm,
+    manage_messages: Perm,
+}
+
+#[derive(Clone, PartialEq, Debug)]
+enum PermableEntity {
+    User(User),
+    Group(Group),
+}
 
 #[derive(Clone, PartialEq, Debug, Serialize)]
 pub struct Channel {
     pub uuid: i64,
     pub name: String,
     pub position: usize,
+    #[serde(skip)]
+    pub perms: Vec<(PermableEntity, ChannelPerms)>,
 }
 
 //message.rs for message models
@@ -19,7 +50,7 @@ pub struct User {
     pub password: String, // hashed, don't you worry
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
 pub struct Group {
     pub uuid: i64,
     pub permissions: i64,
