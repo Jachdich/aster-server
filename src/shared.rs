@@ -2,6 +2,7 @@ use crate::helper::gen_uuid;
 use crate::helper::Uuid;
 use crate::message::*;
 use crate::models::*;
+use crate::permissions::ServerPerms;
 use rusqlite::params;
 use rusqlite::Connection;
 use rusqlite::OptionalExtension;
@@ -87,6 +88,15 @@ CREATE TABLE sync_servers (
     name Text,
     idx Integer NOT NULL
 );
+
+CREATE TABLE channel_group_permissions (
+    channel_uuid BigInt NOT NULL,
+    user_uuid BigInt,
+    group_uuid BigInt,
+    permissions TODO TODO NOT NULL,
+    FOREIGN KEY (user_uuid) REFERENCES users(uuid),
+    FOREIGN KEY (group_uuid) REFERENCES groups(uuid)
+);
 COMMIT;"#,
         LATEST_VERSION,
         gen_uuid()
@@ -136,6 +146,21 @@ COMMIT;
         }
         Ok(())
     }),
+},
+Migration {
+    from: 2,
+    to: 3,
+    sql: r#"
+CREATE TABLE channel_group_permissions (
+    channel_uuid BigInt NOT NULL,
+    user_uuid BigInt,
+    group_uuid BigInt,
+    permissions TODO TODO NOT NULL,
+    FOREIGN KEY (user_uuid) REFERENCES users(uuid),
+    FOREIGN KEY (group_uuid) REFERENCES groups(uuid)
+);
+    "#, // TODO
+    f: None, 
 }];
 
 impl Shared {
@@ -247,7 +272,7 @@ impl Shared {
         self.online.insert(user, orig_count + 1);
     }
 
-    pub fn get_user_by_name(&mut self, name: &str) -> Result<Option<User>, DbError> {
+    pub fn get_user_by_name(&self, name: &str) -> Result<Option<User>, DbError> {
         let mut smt = self
             .conn
             .prepare("SELECT * FROM users WHERE name = ?1 LIMIT 1")?;
@@ -264,22 +289,35 @@ impl Shared {
         .optional()
     }
 
-    pub fn get_users(&mut self) -> Result<Vec<User>, DbError> {
+    pub fn get_groups_of(&self, user_uuid: Uuid) -> Result<Vec<Group>, DbError> {
+        self.conn.prepare("SELECT * FROM user_groups WHERE user_uuid = ?1")?.query_map([user_uuid], |row| {
+            Ok(Group {
+                uuid: row.get(0)?,
+                permissions: row.get::<usize, i64>(1)?.into(),
+                name: row.get(2)?,
+                colour: row.get(3)?,
+            })
+        })?.collect()
+    }
+
+    pub fn get_users(&self) -> Result<Vec<User>, DbError> {
         self.conn
             .prepare("SELECT * FROM USERS")?
             .query_map([], |row| {
+                let uuid = row.get(0)?;
                 Ok(User {
-                    uuid: row.get(0)?,
+                    uuid,
                     name: row.get(1)?,
                     pfp: row.get(2)?,
                     group_uuid: row.get(3)?,
                     password: row.get(4)?,
+                    groups: self.get_groups_of(uuid)?,
                 })
             })?
             .collect()
     }
 
-    pub fn get_channels(&mut self) -> Result<Vec<Channel>, DbError> {
+    pub fn get_channels(&self) -> Result<Vec<Channel>, DbError> {
         self.conn
             .prepare("SELECT * FROM CHANNELS")?
             .query_map([], |row| {
@@ -287,12 +325,13 @@ impl Shared {
                     uuid: row.get(0)?,
                     name: row.get(1)?,
                     position: row.get(2)?,
+                    permissions: HashMap::new(),
                 })
             })?
             .collect()
     }
 
-    pub fn channel_exists(&mut self, uuid: &Uuid) -> Result<bool, DbError> {
+    pub fn channel_exists(&self, uuid: &Uuid) -> Result<bool, DbError> {
         // TODO this might be slow
         Ok(self
             .get_channels()?
@@ -300,35 +339,37 @@ impl Shared {
             .any(|channel| channel.uuid == *uuid))
     }
 
-    pub fn update_channel(&mut self, c: &Channel) -> Result<usize, DbError> {
+    pub fn update_channel(&self, c: &Channel) -> Result<usize, DbError> {
         self.conn
             .prepare("update channels set name = ?2, position = ?3 where uuid = ?1")?
             .execute(params![c.uuid, c.name, c.position])
     }
 
-    pub fn message_exists(&mut self, uuid: &Uuid) -> Result<bool, DbError> {
+    pub fn message_exists(&self, uuid: &Uuid) -> Result<bool, DbError> {
         Ok(self
             .conn
             .prepare("select exists(select 1 from messages where uuid=?1)")?
             .query_row([uuid], |row| Ok(row.get::<usize, i32>(0)? == 1))?)
     }
 
-    pub fn get_user(&mut self, user: i64) -> Result<Option<User>, DbError> {
+    pub fn get_user(&self, user: i64) -> Result<Option<User>, DbError> {
         self.conn
             .prepare("select * from users where uuid = ?1")?
             .query_row([user], |row| {
+                let uuid = row.get(0)?;
                 Ok(User {
-                    uuid: row.get(0)?,
+                    uuid,
                     name: row.get(1)?,
                     pfp: row.get(2)?,
                     group_uuid: row.get(3)?,
                     password: row.get(4)?,
+                    groups: self.get_groups_of(uuid)?,
                 })
             })
             .optional()
     }
 
-    pub fn add_to_history(&mut self, msg: &Message) -> Result<(), DbError> {
+    pub fn add_to_history(&self, msg: &Message) -> Result<(), DbError> {
         self.conn
             .prepare("insert into messages values (?1, ?2, ?3, ?4, ?5, ?6, ?7)")?
             .execute(rusqlite::params![
@@ -343,7 +384,7 @@ impl Shared {
         Ok(())
     }
 
-    pub fn get_channel(&mut self, channel: &Uuid) -> Result<Option<Channel>, DbError> {
+    pub fn get_channel(&self, channel: &Uuid) -> Result<Option<Channel>, DbError> {
         self.conn
             .prepare("select * from channels where uuid = ?1")?
             .query_row([channel], |row| {
@@ -351,12 +392,13 @@ impl Shared {
                     uuid: row.get(0)?,
                     name: row.get(1)?,
                     position: row.get(2)?,
+                    permissions: HashMap::new(),
                 })
             })
             .optional()
     }
 
-    pub fn get_message(&mut self, message: Uuid) -> Result<Option<Message>, DbError> {
+    pub fn get_message(&self, message: Uuid) -> Result<Option<Message>, DbError> {
         self.conn
             .prepare("select * from messages where uuid = ?1 limit 1")?
             .query_row([message], |row| {
@@ -373,7 +415,7 @@ impl Shared {
             .optional()
     }
 
-    pub fn get_sync_data(&mut self, uuid: &Uuid) -> Result<Option<SyncData>, DbError> {
+    pub fn get_sync_data(&self, uuid: &Uuid) -> Result<Option<SyncData>, DbError> {
         self.conn
             .prepare("select * from sync_data where user_uuid = ?1 limit 1")?
             .query_row([uuid], |row| {
@@ -386,7 +428,7 @@ impl Shared {
             .optional()
     }
 
-    pub fn get_channel_by_name(&mut self, channel: &str) -> Result<Option<Channel>, DbError> {
+    pub fn get_channel_by_name(&self, channel: &str) -> Result<Option<Channel>, DbError> {
         self.conn
             .prepare("select * from channels where name = ?1 order by position")?
             .query_row([channel], |row| {
@@ -399,13 +441,13 @@ impl Shared {
             .optional()
     }
 
-    pub fn insert_channel(&mut self, channel: Channel) -> Result<usize, DbError> {
+    pub fn insert_channel(&self, channel: Channel) -> Result<usize, DbError> {
         self.conn
             .prepare("insert into channels values (?1, ?2, ?3)")?
             .execute(params![channel.uuid, channel.name, channel.position])
     }
 
-    pub fn insert_user(&mut self, user: User) -> Result<usize, DbError> {
+    pub fn insert_user(&self, user: User) -> Result<usize, DbError> {
         self.conn
             .prepare("insert into users values (?1, ?2, ?3, ?4, ?5)")?
             .execute(params![
@@ -417,13 +459,13 @@ impl Shared {
             ])
     }
 
-    pub fn insert_sync_data(&mut self, data: &SyncData) -> Result<usize, DbError> {
+    pub fn insert_sync_data(&self, data: &SyncData) -> Result<usize, DbError> {
         self.conn
             .prepare("insert into sync_data values (?1, ?2, ?3)")?
             .execute(params![data.user_uuid, data.uname, data.pfp])
     }
 
-    pub fn insert_sync_server(&mut self, data: SyncServer) -> Result<usize, DbError> {
+    pub fn insert_sync_server(&self, data: SyncServer) -> Result<usize, DbError> {
         self.conn
             .prepare("insert into sync_servers values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)")?
             .execute(params![
@@ -438,19 +480,19 @@ impl Shared {
             ])
     }
 
-    pub fn update_user(&mut self, user: &User) -> Result<usize, DbError> {
+    pub fn update_user(&self, user: &User) -> Result<usize, DbError> {
         self.conn
             .prepare("update users set name = ?1, pfp = ?2, group_uuid = ?3, password = ?4 where uuid = ?5")?
             .execute(params![user.name, user.pfp, user.group_uuid, user.password, user.uuid])
     }
 
-    pub fn update_sync_data(&mut self, data: SyncData) -> Result<usize, DbError> {
+    pub fn update_sync_data(&self, data: SyncData) -> Result<usize, DbError> {
         self.conn
             .prepare("update sync_data set uname = ?1, pfp = ?2 where user_uuid = ?3")?
             .execute(params![data.uname, data.pfp, data.user_uuid])
     }
 
-    pub fn get_emoji(&mut self, uuid: Uuid) -> Result<Option<Emoji>, DbError> {
+    pub fn get_emoji(&self, uuid: Uuid) -> Result<Option<Emoji>, DbError> {
         self.conn
             .prepare("select * from emojis where uuid = ?1")?
             .query_row([uuid], |row| {
@@ -463,38 +505,38 @@ impl Shared {
             .optional()
     }
 
-    pub fn list_emoji(&mut self) -> Result<Vec<(String, Uuid)>, DbError> {
+    pub fn list_emoji(&self) -> Result<Vec<(String, Uuid)>, DbError> {
         self.conn
             .prepare("select name, uuid from emojis")?
             .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
             .collect()
     }
 
-    pub fn edit_message(&mut self, uuid: Uuid, new_content: &str) -> Result<usize, DbError> {
+    pub fn edit_message(&self, uuid: Uuid, new_content: &str) -> Result<usize, DbError> {
         self.conn
             .prepare("update messages set content = ?1, edited = true where uuid = ?2")?
             .execute(params![new_content, uuid])
     }
 
-    pub fn delete_message(&mut self, uuid: Uuid) -> Result<usize, DbError> {
+    pub fn delete_message(&self, uuid: Uuid) -> Result<usize, DbError> {
         self.conn
             .prepare("delete from messages where uuid = ?1")?
             .execute([uuid])
     }
 
-    pub fn delete_channel(&mut self, uuid: Uuid) -> Result<usize, DbError> {
+    pub fn delete_channel(&self, uuid: Uuid) -> Result<usize, DbError> {
         self.conn
             .prepare("delete from channels where uuid = ?1")?
             .execute([uuid])
     }
 
-    pub fn clear_sync_servers_of(&mut self, user: Uuid) -> Result<usize, DbError> {
+    pub fn clear_sync_servers_of(&self, user: Uuid) -> Result<usize, DbError> {
         self.conn
             .prepare("delete from sync_servers where user_uuid = ?1")?
             .execute([user])
     }
 
-    pub fn get_sync_servers(&mut self, user: Uuid) -> Result<Vec<SyncServer>, DbError> {
+    pub fn get_sync_servers(&self, user: Uuid) -> Result<Vec<SyncServer>, DbError> {
         self.conn
             .prepare("select * from sync_servers where user_uuid = ?1 order by idx")?
             .query_map([user], |row| {
@@ -513,7 +555,7 @@ impl Shared {
     }
 
     pub fn get_history(
-        &mut self,
+        &self,
         channel: Uuid,
         num: u32,
         before_message: Option<Uuid>,
@@ -544,6 +586,7 @@ impl Shared {
 mod tests {
     use super::*;
 
+    // TODO !!!!!! test new user/channel/group/groups_of/perms stuff
     // TODO !!!!! improve / increase migration testing
     #[test]
     fn migration_simple() {

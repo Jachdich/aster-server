@@ -30,7 +30,6 @@ pub mod message;
 pub mod models;
 pub mod peer;
 pub mod permissions;
-pub mod schema;
 pub mod shared;
 
 use crate::commands::send_online;
