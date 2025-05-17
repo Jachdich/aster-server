@@ -99,7 +99,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     builder.filter_level(log::LevelFilter::Info).init();
 
     let args: Vec<_> = env::args().collect();
-    let use_scratch_db = args.len() > 1 && args[1]  == "--scratch-db";
+    let use_scratch_db = args.len() > 1 && args[1] == "--scratch-db";
 
     let sqlitedb = if use_scratch_db {
         rusqlite::Connection::open_in_memory().unwrap()
@@ -111,7 +111,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
             )
         })
     };
-    let state = Arc::new(Mutex::new(Shared::new(sqlitedb)));
+    let shared = Shared::new(sqlitedb);
+    shared.init_db();
+    let state = Arc::new(Mutex::new(shared));
 
     let addr = format!("{}:{}", &CONF.addr, CONF.port);
 
