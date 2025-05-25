@@ -1,20 +1,22 @@
+use crate::{
+    helper::Uuid,
+    permissions::{PermableEntity, Permissions},
+};
 use std::collections::HashMap;
-use crate::permissions::{ChannelPerms, PermableEntity, ServerPerms};
 
 use serde::{Deserialize, Serialize};
-
 
 #[derive(Clone, PartialEq, Debug, Serialize)]
 pub struct Channel {
     pub uuid: i64,
     pub name: String,
     pub position: usize,
-    #[serde(skip)]
-    pub permissions: HashMap<PermableEntity, ChannelPerms>,
+    pub permissions: HashMap<PermableEntity, Permissions>,
 }
 
 //message.rs for message models
 
+// TODO should users have permissions?
 #[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
 pub struct User {
     pub uuid: i64,
@@ -23,25 +25,23 @@ pub struct User {
     pub group_uuid: i64,
     #[serde(skip)]
     pub password: String, // hashed, don't you worry
-    #[serde(skip)]
-    pub groups: Vec<Group>,
+    pub groups: Vec<Uuid>,
 }
 
-#[derive(Clone, Serialize, PartialEq, Debug)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
 pub struct Group {
     pub uuid: i64,
-    #[serde(skip)]
-    pub permissions: ServerPerms,
+    pub permissions: Permissions,
     pub name: String,
     pub colour: i32,
 }
 
-#[derive(Clone)]
-pub struct UserGroupConnection {
-    link_id: i32,
-    pub user_uuid: i64,
-    pub group_uuid: i64,
-}
+// #[derive(Clone)]
+// pub struct UserGroupConnection {
+//     link_id: i32,
+//     pub user_uuid: i64,
+//     pub group_uuid: i64,
+// }
 
 #[derive(Clone, PartialEq, Debug, Serialize)]
 pub struct SyncData {
@@ -86,3 +86,13 @@ impl SyncData {
         }
     }
 }
+
+// impl User {
+//     pub fn resolve_server_permissions(&self) -> Permissions {
+//         let server_defaults = Permissions { }
+//     }
+//     pub fn resolve_channel_permissions(&self, channel_in: &Channel) -> Permissions {
+//         let defaults = self.resolve_server_permissions();
+//         defaults.apply_over()
+//     }
+// }
