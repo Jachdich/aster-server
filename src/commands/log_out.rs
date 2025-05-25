@@ -58,6 +58,7 @@ impl Request for RegisterRequest {
             uuid,
             group_uuid: 0,
             password: make_hash(&self.passwd)?,
+            groups: Vec::new(),
         };
 
         state_lock.insert_user(user)?;
