@@ -25,7 +25,7 @@ pub struct Shared {
     )>,
 }
 
-type DbError = rusqlite::Error;
+pub type DbError = rusqlite::Error;
 const LATEST_VERSION: i32 = 4;
 
 // TODO add unique constraints where applicable
@@ -39,7 +39,7 @@ CREATE TABLE version (
 INSERT INTO version VALUES({});
 CREATE TABLE server_config (
     name text NOT NULL,
-    pfp blob NOT NULL,
+    icon blob NOT NULL,
     base_perms blob NOT NULL,
 );
 CREATE TABLE channels (
@@ -63,9 +63,7 @@ CREATE TABLE users (
     uuid BigInt PRIMARY KEY NOT NULL,
     name text NOT NULL,
     pfp text NOT NULL,
-    group_uuid BigInt NOT NULL,
     password text NOT NULL,
-    FOREIGN KEY (group_uuid) REFERENCES groups(uuid)
 );
 CREATE TABLE groups (
     uuid BigInt PRIMARY KEY NOT NULL,
@@ -198,9 +196,10 @@ const MIGRATIONS: &[Migration] = &[
             begin;
             CREATE TABLE server_config (
                 name text NOT NULL,
-                pfp blob NOT NULL,
+                icon blob NOT NULL,
                 base_perms blob NOT NULL,
             );
+            ALTER TABLE users DROP COLUMN group_uuid;
             commit;
         "#,
 
@@ -219,7 +218,7 @@ const MIGRATIONS: &[Migration] = &[
                 join_voice: Perm::Allow,
             };
             let perm_bytes: Box<[u8]> = default_base_perms.into();
-            sqlitedb.execute("UPDATE server_config SET pfp = ?1, name = ?2, base_perms = ?3", params![pfp_bytes, &CONF.name, perm_bytes.into_vec()])?;
+            sqlitedb.execute("UPDATE server_config SET icon = ?1, name = ?2, base_perms = ?3", params![pfp_bytes, &CONF.name, perm_bytes.into_vec()])?;
             Ok(())
         }),
     }
@@ -303,18 +302,48 @@ impl Shared {
         let perm_bytes: Box<[u8]> = default_base_perms.into();
         self.conn
             .execute(
-                "UPDATE server_config SET pfp = ?1, name = ?2, base_perms = ?3",
+                "UPDATE server_config SET icon = ?1, name = ?2, base_perms = ?3",
                 params![pfp_bytes, "Aster Server", perm_bytes.into_vec()],
             )
             .unwrap();
     }
 
-    fn get_name(&self) -> Result<String, DbError> {}
-    fn get_icon(&self) -> Result<Vec<u8>, DbError> {}
-    fn get_base_perms(&self) -> Result<Permissions, DbError> {}
-    fn set_name(&self) -> Result<String, DbError> {}
-    fn set_icon(&self) -> Result<Vec<u8>, DbError> {}
-    fn set_base_perms(&self) -> Result<Permissions, DbError> {}
+    pub fn get_name(&self) -> Result<String, DbError> {
+        self.conn
+            .prepare("SELECT name FROM server_config")?
+            .query_row([], |row| row.get(0))
+    }
+    pub fn get_icon(&self) -> Result<Vec<u8>, DbError> {
+        self.conn
+            .prepare("SELECT icon FROM server_config")?
+            .query_row([], |row| row.get(0))
+    }
+    pub fn get_base_perms(&self) -> Result<Permissions, DbError> {
+        let bytes: Vec<u8> = self
+            .conn
+            .prepare("SELECT base_perms FROM server_config")?
+            .query_row([], |row| row.get(0))?;
+        Ok(bytes.as_slice().into())
+    }
+    pub fn set_name(&self, name: &str) -> Result<(), DbError> {
+        self.conn
+            .prepare("UPDATE server_config SET name = ?1")?
+            .execute([name])?;
+        Ok(())
+    }
+    pub fn set_icon(&self, icon: &[u8]) -> Result<(), DbError> {
+        self.conn
+            .prepare("UPDATE server_config SET icon = ?1")?
+            .execute([icon])?;
+        Ok(())
+    }
+    pub fn set_base_perms(&self, perms: Permissions) -> Result<(), DbError> {
+        let bytes: Box<[u8]> = perms.into();
+        self.conn
+            .prepare("UPDATE server_config SET base_perms = ?1")?
+            .execute([bytes.into_vec()])?;
+        Ok(())
+    }
 
     fn apply_migrations(
         &self,
@@ -384,8 +413,7 @@ impl Shared {
                 uuid,
                 name: row.get(1)?,
                 pfp: row.get(2)?,
-                group_uuid: row.get(3)?,
-                password: row.get(4)?,
+                password: row.get(3)?,
                 groups: self.get_group_uuids_of(uuid)?,
             })
         })
@@ -422,8 +450,7 @@ impl Shared {
                     uuid,
                     name: row.get(1)?,
                     pfp: row.get(2)?,
-                    group_uuid: row.get(3)?,
-                    password: row.get(4)?,
+                    password: row.get(3)?,
                     groups: self.get_group_uuids_of(uuid)?,
                 })
             })?
@@ -534,8 +561,7 @@ impl Shared {
                     uuid,
                     name: row.get(1)?,
                     pfp: row.get(2)?,
-                    group_uuid: row.get(3)?,
-                    password: row.get(4)?,
+                    password: row.get(3)?,
                     groups: self.get_group_uuids_of(uuid)?,
                 })
             })
@@ -636,14 +662,8 @@ impl Shared {
 
     pub fn insert_user(&self, user: User) -> Result<(), DbError> {
         self.conn
-            .prepare("insert into users values (?1, ?2, ?3, ?4, ?5)")?
-            .execute(params![
-                user.uuid,
-                user.name,
-                user.pfp,
-                user.group_uuid,
-                user.password
-            ])?;
+            .prepare("insert into users values (?1, ?2, ?3, ?4)")?
+            .execute(params![user.uuid, user.name, user.pfp, user.password])?;
         self.insert_user_groups(&user)
     }
 
@@ -670,8 +690,8 @@ impl Shared {
 
     pub fn update_user(&self, user: &User) -> Result<(), DbError> {
         self.conn
-            .prepare("update users set name = ?1, pfp = ?2, group_uuid = ?3, password = ?4 where uuid = ?5")?
-            .execute(params![user.name, user.pfp, user.group_uuid, user.password, user.uuid])?;
+            .prepare("update users set name = ?1, pfp = ?2, password = ?4 where uuid = ?5")?
+            .execute(params![user.name, user.pfp, user.password, user.uuid])?;
 
         // clear and re-add groups
         // TODO maybe not the most efficient
@@ -950,7 +970,6 @@ mod tests {
             uuid: gen_uuid(),
             name: "Test user".into(),
             pfp: "test pfp".into(),
-            group_uuid: 0,
             password: "password".into(),
             groups: Vec::new(),
         };
@@ -958,7 +977,6 @@ mod tests {
             uuid: gen_uuid(),
             name: "User 2".into(),
             pfp: "test_pfp".into(),
-            group_uuid: 0,
             password: "12345".into(),
             groups: Vec::new(),
         };
@@ -1118,7 +1136,6 @@ mod tests {
             uuid: u1.uuid,
             name: "Test user updated".into(),
             pfp: "pfp2".into(),
-            group_uuid: 2,
             password: "abcde".into(),
             groups: Vec::new(),
         };
