@@ -8,12 +8,10 @@ use crate::permissions::Permissions;
 use crate::CONF;
 use base64::engine::general_purpose;
 use base64::Engine;
-use rusqlite::ffi::SQLITE_CONFIG_PAGECACHE;
 use rusqlite::params;
 use rusqlite::Connection;
 use rusqlite::OptionalExtension;
 use std::collections::HashMap;
-use std::io::Read;
 use tokio::sync::mpsc;
 
 pub struct Shared {
@@ -29,6 +27,8 @@ pub type DbError = rusqlite::Error;
 const LATEST_VERSION: i32 = 4;
 
 // TODO add unique constraints where applicable
+// TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO
+// hierarchy in groups/group perms etc
 fn latest_schema() -> String {
     format!(
         r#"
@@ -40,7 +40,7 @@ INSERT INTO version VALUES({});
 CREATE TABLE server_config (
     name text NOT NULL,
     icon blob NOT NULL,
-    base_perms blob NOT NULL,
+    base_perms blob NOT NULL
 );
 CREATE TABLE channels (
     uuid BigInt PRIMARY KEY NOT NULL,
@@ -63,13 +63,14 @@ CREATE TABLE users (
     uuid BigInt PRIMARY KEY NOT NULL,
     name text NOT NULL,
     pfp text NOT NULL,
-    password text NOT NULL,
+    password text NOT NULL
 );
 CREATE TABLE groups (
     uuid BigInt PRIMARY KEY NOT NULL,
     name text NOT NULL,
     colour integer NOT NULL,
-    permissions Blob NOT NULL
+    permissions Blob NOT NULL,
+    position Integer NOT NULL
 );
 CREATE TABLE user_groups (
     user_uuid BigInt NOT NULL,
@@ -197,9 +198,17 @@ const MIGRATIONS: &[Migration] = &[
             CREATE TABLE server_config (
                 name text NOT NULL,
                 icon blob NOT NULL,
-                base_perms blob NOT NULL,
+                base_perms blob NOT NULL
             );
             ALTER TABLE users DROP COLUMN group_uuid;
+            DROP TABLE groups;
+            CREATE TABLE groups (
+                uuid BigInt PRIMARY KEY NOT NULL,
+                name text NOT NULL,
+                colour integer NOT NULL,
+                permissions Blob NOT NULL,
+                position Integer NOT NULL
+            );
             commit;
         "#,
 
@@ -218,7 +227,7 @@ const MIGRATIONS: &[Migration] = &[
                 join_voice: Perm::Allow,
             };
             let perm_bytes: Box<[u8]> = default_base_perms.into();
-            sqlitedb.execute("UPDATE server_config SET icon = ?1, name = ?2, base_perms = ?3", params![pfp_bytes, &CONF.name, perm_bytes.into_vec()])?;
+            sqlitedb.execute("INSERT INTO server_config VALUES (?1, ?2, ?3)", params![&CONF.name, pfp_bytes, perm_bytes.into_vec()])?;
             Ok(())
         }),
     }
@@ -233,6 +242,7 @@ impl Shared {
         }
     }
 
+    /// Initialise by applying any migrations that are applicable, based on the version.
     pub fn init_db(&self) {
         let version = self.get_db_version();
         let version = match version {
@@ -246,6 +256,10 @@ impl Shared {
         self.apply_migrations(MIGRATIONS, version, LATEST_VERSION);
     }
 
+    /// Query the version from the database. If the database has no version table,
+    /// it will guess based on the existence of the channels table - if it exists,
+    /// version `0` (i.e. before the version table was added) is assumed.
+    /// If not, it will return `None`, representing the absence of any version information.
     fn get_db_version(&self) -> Option<i32> {
         let table_exists = self
             .conn
@@ -285,6 +299,7 @@ impl Shared {
         }
     }
 
+    /// From an empty database, create all the tables and insert any initial values.
     fn init_tables(&self, init_sql: &str) {
         self.conn.execute_batch(init_sql).unwrap();
         let pfp_bytes = include_bytes!("../icon.png").to_vec();
@@ -302,8 +317,8 @@ impl Shared {
         let perm_bytes: Box<[u8]> = default_base_perms.into();
         self.conn
             .execute(
-                "UPDATE server_config SET icon = ?1, name = ?2, base_perms = ?3",
-                params![pfp_bytes, "Aster Server", perm_bytes.into_vec()],
+                "INSERT INTO server_config VALUES (?1, ?2, ?3)",
+                params!["Aster Server", pfp_bytes, perm_bytes.into_vec()],
             )
             .unwrap();
     }
@@ -420,6 +435,9 @@ impl Shared {
         .optional()
     }
 
+    /// Get the [`Group`] from the database with the given id
+    /// Returns `Err(_)` if the database operation failed,
+    /// and `Ok(None)` if the given id does not exist.
     pub fn get_group(&self, group_uuid: Uuid) -> Result<Option<Group>, DbError> {
         self.conn
             .prepare("SELECT * FROM groups WHERE uuid = ?1")?
@@ -429,9 +447,21 @@ impl Shared {
                     permissions: row.get::<usize, Vec<u8>>(1)?.as_slice().into(),
                     name: row.get(2)?,
                     colour: row.get(3)?,
+                    position: row.get(4)?,
                 })
             })
             .optional()
+    }
+
+    /// Get the [`Group`] from the database with the given id
+    /// This function assumes the group exists - it returns `Err(rusqlite::Error::QueryReturnedNoRows)`
+    /// if the group does not exist.
+    pub fn get_group_exists(&self, group_uuid: Uuid) -> Result<Group, DbError> {
+        match self.get_group(group_uuid) {
+            Ok(Some(group)) => Ok(group),
+            Ok(None) => Err(DbError::QueryReturnedNoRows),
+            Err(e) => Err(e),
+        }
     }
 
     pub fn get_group_uuids_of(&self, user_uuid: Uuid) -> Result<Vec<Uuid>, DbError> {
@@ -643,7 +673,7 @@ impl Shared {
             .optional()
     }
 
-    pub fn insert_channel(&self, channel: Channel) -> Result<(), DbError> {
+    pub fn insert_channel(&self, channel: &Channel) -> Result<(), DbError> {
         self.conn
             .prepare("insert into channels values (?1, ?2, ?3)")?
             .execute(params![channel.uuid, channel.name, channel.position])?;
@@ -660,7 +690,7 @@ impl Shared {
         Ok(())
     }
 
-    pub fn insert_user(&self, user: User) -> Result<(), DbError> {
+    pub fn insert_user(&self, user: &User) -> Result<(), DbError> {
         self.conn
             .prepare("insert into users values (?1, ?2, ?3, ?4)")?
             .execute(params![user.uuid, user.name, user.pfp, user.password])?;
@@ -690,7 +720,7 @@ impl Shared {
 
     pub fn update_user(&self, user: &User) -> Result<(), DbError> {
         self.conn
-            .prepare("update users set name = ?1, pfp = ?2, password = ?4 where uuid = ?5")?
+            .prepare("update users set name = ?1, pfp = ?2, password = ?3 where uuid = ?4")?
             .execute(params![user.name, user.pfp, user.password, user.uuid])?;
 
         // clear and re-add groups
@@ -794,6 +824,60 @@ impl Shared {
                 })
             )?.collect()
     }
+
+    pub fn insert_group(&self, group: &Group) -> Result<(), DbError> {
+        self.conn
+            .prepare("INSERT INTO groups VALUES (?1, ?2, ?3, ?4, ?5)")?
+            .execute(params![
+                group.uuid,
+                Into::<Box<[u8]>>::into(&group.permissions).to_vec(),
+                group.name,
+                group.colour,
+                group.position,
+            ])?;
+        Ok(())
+    }
+
+    // TODO in another struct?
+    pub fn resolve_server_permissions(&self, user: &User) -> Result<Permissions, DbError> {
+        let base = self.get_base_perms()?;
+        let mut groups = user
+            .groups
+            .iter()
+            .map(|guuid| self.get_group_exists(*guuid))
+            .collect::<Result<Vec<_>, _>>()?;
+        groups.sort_unstable_by_key(|g| g.position);
+        let perms = groups
+            .iter()
+            .rev()
+            .fold(base, |acc, g| acc.apply_over(&g.permissions));
+        Ok(perms)
+    }
+    pub fn resolve_channel_permissions(
+        &self,
+        user: &User,
+        channel_in: &Channel,
+    ) -> Result<Permissions, DbError> {
+        let base = self.resolve_server_permissions(user)?;
+        // TODO as much as I like iterators, this might be better as a for loop.
+        let mut to_apply = channel_in
+            .permissions
+            .iter()
+            .filter_map(|(entity, perm)| match entity {
+                PermableEntity::User(uuid) if *uuid == user.uuid => Some(Ok((perm, 0))),
+                PermableEntity::Group(guuid) if user.groups.contains(guuid) => {
+                    Some(self.get_group_exists(*guuid).map(|g| (perm, g.position)))
+                }
+                _ => None,
+            })
+            .collect::<Result<Vec<_>, DbError>>()?;
+        to_apply.sort_unstable_by_key(|(_, pos)| *pos);
+        let perms = to_apply
+            .iter()
+            .rev()
+            .fold(base, |acc, (perm, _)| acc.apply_over(&perm));
+        Ok(perms)
+    }
 }
 
 #[cfg(test)]
@@ -811,12 +895,168 @@ mod tests {
     // TODO !!!!!! test new user/channel/group/groups_of/perms stuff
     // TODO !!!!! improve / increase migration testing
     // TODO !!! test that non-channel perms being given in a specific channel are ignored
+
+    #[test]
+    fn permissions_simple() {
+        use Perm::*;
+        let s = init();
+        s.set_base_perms(Permissions {
+            modify_channels: Deny,
+            modify_icon_name: Deny,
+            modify_groups: Deny,
+            modify_user_groups: Deny,
+            ban_users: Deny,
+            send_messages: Allow,
+            read_messages: Allow,
+            manage_messages: Deny,
+            join_voice: Deny,
+        })
+        .unwrap();
+
+        let g1 = Group {
+            uuid: gen_uuid(),
+            permissions: Permissions {
+                modify_channels: Default,
+                modify_icon_name: Default,
+                modify_groups: Deny,
+                modify_user_groups: Default,
+                ban_users: Default,
+                send_messages: Deny,
+                read_messages: Default,
+                manage_messages: Default,
+                join_voice: Default,
+            },
+            name: "G1".to_owned(),
+            colour: 0xFF0000,
+            position: 1,
+        };
+        let g2 = Group {
+            uuid: gen_uuid(),
+            permissions: Permissions {
+                modify_channels: Default,
+                modify_icon_name: Default,
+                modify_groups: Allow,
+                modify_user_groups: Default,
+                ban_users: Default,
+                send_messages: Default,
+                read_messages: Default,
+                manage_messages: Default,
+                join_voice: Allow,
+            },
+            name: "G2".to_owned(),
+            colour: 0xF0F000,
+            position: 2,
+        };
+
+        s.insert_group(&g1).unwrap();
+        s.insert_group(&g2).unwrap();
+
+        let u1 = User {
+            uuid: gen_uuid(),
+            name: "u1".into(),
+            pfp: "".into(),
+            password: "".into(),
+            groups: vec![g2.uuid, g1.uuid],
+        };
+        let u4 = User {
+            uuid: gen_uuid(),
+            name: "u4".into(),
+            pfp: "".into(),
+            password: "".into(),
+            groups: vec![g1.uuid, g2.uuid],
+        };
+        let u2 = User {
+            uuid: gen_uuid(),
+            name: "u2".into(),
+            pfp: "".into(),
+            password: "".into(),
+            groups: vec![g1.uuid],
+        };
+        let u3 = User {
+            uuid: gen_uuid(),
+            name: "u3".into(),
+            pfp: "".into(),
+            password: "".into(),
+            groups: vec![],
+        };
+
+        s.insert_user(&u1).unwrap();
+        s.insert_user(&u2).unwrap();
+        s.insert_user(&u3).unwrap();
+        s.insert_user(&u4).unwrap();
+
+        assert_eq!(
+            s.resolve_server_permissions(&u1).unwrap(),
+            Permissions {
+                modify_channels: Deny,
+                modify_icon_name: Deny,
+                modify_groups: Deny,
+                modify_user_groups: Deny,
+                ban_users: Deny,
+                send_messages: Deny,
+                read_messages: Allow,
+                manage_messages: Deny,
+                join_voice: Allow,
+            }
+        );
+        assert_eq!(
+            s.resolve_server_permissions(&u4).unwrap(),
+            Permissions {
+                modify_channels: Deny,
+                modify_icon_name: Deny,
+                modify_groups: Deny,
+                modify_user_groups: Deny,
+                ban_users: Deny,
+                send_messages: Deny,
+                read_messages: Allow,
+                manage_messages: Deny,
+                join_voice: Allow,
+            }
+        );
+        assert_eq!(
+            s.resolve_server_permissions(&u2).unwrap(),
+            Permissions {
+                modify_channels: Deny,
+                modify_icon_name: Deny,
+                modify_groups: Deny,
+                modify_user_groups: Deny,
+                ban_users: Deny,
+                send_messages: Deny,
+                read_messages: Allow,
+                manage_messages: Deny,
+                join_voice: Deny,
+            }
+        );
+        assert_eq!(
+            s.resolve_server_permissions(&u3).unwrap(),
+            Permissions {
+                modify_channels: Deny,
+                modify_icon_name: Deny,
+                modify_groups: Deny,
+                modify_user_groups: Deny,
+                ban_users: Deny,
+                send_messages: Allow,
+                read_messages: Allow,
+                manage_messages: Deny,
+                join_voice: Deny,
+            }
+        );
+    }
+
+    #[test]
+    fn groups() {}
+
     #[test]
     fn migration_simple() {
         let init = r#"
             BEGIN;
             CREATE TABLE version (
                 version integer NOT NULL
+            );
+            CREATE TABLE server_config (
+                name text NOT NULL,
+                icon blob NOT NULL,
+                base_perms blob NOT NULL
             );
             INSERT INTO version VALUES(1);
             COMMIT;
@@ -858,6 +1098,11 @@ mod tests {
             CREATE TABLE version (
                 version integer NOT NULL
             );
+            CREATE TABLE server_config (
+                name text NOT NULL,
+                icon blob NOT NULL,
+                base_perms blob NOT NULL
+            );
             INSERT INTO version VALUES(1);
             COMMIT;
         "#;
@@ -896,6 +1141,11 @@ mod tests {
             BEGIN;
             CREATE TABLE version (
                 version integer NOT NULL
+            );
+            CREATE TABLE server_config (
+                name text NOT NULL,
+                icon blob NOT NULL,
+                base_perms blob NOT NULL
             );
             INSERT INTO version VALUES(1);
             COMMIT;
@@ -1059,8 +1309,8 @@ mod tests {
     fn init_with_users() -> (Shared, User, User) {
         let s = init();
         let (u1, u2) = test_users();
-        s.insert_user(u1.clone()).unwrap();
-        s.insert_user(u2.clone()).unwrap();
+        s.insert_user(&u1).unwrap();
+        s.insert_user(&u2).unwrap();
         (s, u1, u2)
     }
 
@@ -1068,8 +1318,8 @@ mod tests {
     fn insert_user() {
         let s = init();
         let (u1, u2) = test_users();
-        assert!(s.insert_user(u1.clone()).is_ok());
-        assert!(s.insert_user(u2.clone()).is_ok());
+        assert!(s.insert_user(&u1).is_ok());
+        assert!(s.insert_user(&u2).is_ok());
     }
 
     #[test]
@@ -1139,7 +1389,7 @@ mod tests {
             password: "abcde".into(),
             groups: Vec::new(),
         };
-        assert!(s.update_user(&new_u1).is_ok());
+        s.update_user(&new_u1).unwrap();
         let user_1_query = s.get_user(u1.uuid);
         assert!(user_1_query.is_ok());
         let user_1_query = user_1_query.unwrap();
@@ -1161,16 +1411,16 @@ mod tests {
     fn insert_channels() {
         let s = init();
         let (c1, c2) = test_channels();
-        assert!(s.insert_channel(c1.clone()).is_ok());
-        assert!(s.insert_channel(c2).is_ok());
+        assert!(s.insert_channel(&c1).is_ok());
+        assert!(s.insert_channel(&c2).is_ok());
     }
 
     #[test]
     fn get_channel_by_uuid() {
         let s = init();
         let (c1, c2) = test_channels();
-        assert!(s.insert_channel(c1.clone()).is_ok());
-        assert!(s.insert_channel(c2).is_ok());
+        assert!(s.insert_channel(&c1).is_ok());
+        assert!(s.insert_channel(&c2).is_ok());
 
         let c1_q = s.get_channel(&c1.uuid);
         assert!(c1_q.is_ok());
@@ -1185,8 +1435,8 @@ mod tests {
     fn get_channel_by_name() {
         let s = init();
         let (c1, c2) = test_channels();
-        assert!(s.insert_channel(c1.clone()).is_ok());
-        assert!(s.insert_channel(c2).is_ok());
+        assert!(s.insert_channel(&c1).is_ok());
+        assert!(s.insert_channel(&c2).is_ok());
 
         let c1_q = s.get_channel_by_name(&c1.name);
         assert!(c1_q.is_ok());
@@ -1201,8 +1451,8 @@ mod tests {
     fn get_nonexistant_channel_by_uuid() {
         let s = init();
         let (c1, c2) = test_channels();
-        assert!(s.insert_channel(c1.clone()).is_ok());
-        assert!(s.insert_channel(c2).is_ok());
+        assert!(s.insert_channel(&c1).is_ok());
+        assert!(s.insert_channel(&c2).is_ok());
 
         let c1_q = s.get_channel(&gen_uuid());
         assert!(c1_q.is_ok());
@@ -1214,8 +1464,8 @@ mod tests {
     fn get_nonexistant_channel_by_name() {
         let s = init();
         let (c1, c2) = test_channels();
-        assert!(s.insert_channel(c1.clone()).is_ok());
-        assert!(s.insert_channel(c2).is_ok());
+        assert!(s.insert_channel(&c1).is_ok());
+        assert!(s.insert_channel(&c2).is_ok());
 
         let c1_q = s.get_channel_by_name("this channel does not exist");
         assert!(c1_q.is_ok());
@@ -1233,7 +1483,7 @@ mod tests {
             permissions: HashMap::new(),
         };
 
-        assert!(s.insert_channel(c1.clone()).is_ok());
+        assert!(s.insert_channel(&c1).is_ok());
         assert!(s.channel_exists(&c1.uuid).is_ok());
         assert_eq!(s.channel_exists(&c1.uuid).unwrap(), true);
     }
@@ -1249,7 +1499,7 @@ mod tests {
         };
 
         let not_existing_uuid = gen_uuid();
-        assert!(s.insert_channel(c1.clone()).is_ok());
+        assert!(s.insert_channel(&c1).is_ok());
         assert!(s.channel_exists(&not_existing_uuid).is_ok());
         assert_eq!(s.channel_exists(&not_existing_uuid).unwrap(), false);
     }
@@ -1263,8 +1513,8 @@ mod tests {
             position: 0,
             permissions: HashMap::new(),
         };
-        assert!(s.insert_channel(c1.clone()).is_ok());
-        assert!(s.insert_channel(c1.clone()).is_err());
+        assert!(s.insert_channel(&c1).is_ok());
+        assert!(s.insert_channel(&c1).is_err());
     }
 
     #[test]
@@ -1276,7 +1526,7 @@ mod tests {
             position: 0,
             permissions: HashMap::new(),
         };
-        assert!(s.insert_channel(c1.clone()).is_ok());
+        assert!(s.insert_channel(&c1).is_ok());
         assert!(s.delete_channel(c1.uuid).is_ok());
         assert!(s.get_channel(&c1.uuid).is_ok_and(|c| c.is_none()));
     }
@@ -1289,7 +1539,7 @@ mod tests {
             position: 1,
             permissions: HashMap::new(),
         };
-        assert!(s.insert_channel(c1.clone()).is_ok());
+        assert!(s.insert_channel(&c1).is_ok());
         let c2 = Channel {
             name: "random-shit".into(),
             uuid: c1.uuid,
@@ -1318,10 +1568,10 @@ mod tests {
         let (c1, c2) = test_channels();
         let (u1, u2) = test_users();
         let (m1, m2, m3) = test_messages(&c1, &c2, &u1, &u2);
-        s.insert_channel(c1.clone()).unwrap();
-        s.insert_channel(c2.clone()).unwrap();
-        s.insert_user(u1.clone()).unwrap();
-        s.insert_user(u2.clone()).unwrap();
+        s.insert_channel(&c1).unwrap();
+        s.insert_channel(&c2).unwrap();
+        s.insert_user(&u1).unwrap();
+        s.insert_user(&u2).unwrap();
         if insert {
             s.add_to_history(&m1).unwrap();
             s.add_to_history(&m2).unwrap();
