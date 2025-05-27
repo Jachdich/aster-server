@@ -51,25 +51,23 @@ impl Request for RegisterRequest {
             return Ok(GenericResponse(Status::Conflict));
         }
 
-        let uuid = gen_uuid();
         let user = User {
             name: self.uname,
             pfp: CONF.default_pfp.to_owned(),
-            uuid,
-            group_uuid: 0,
+            uuid: gen_uuid(),
             password: make_hash(&self.passwd)?,
             groups: Vec::new(),
         };
 
-        state_lock.insert_user(user)?;
-        peer.uuid = Some(uuid);
+        state_lock.insert_user(&user)?;
+        peer.uuid = Some(user.uuid);
 
-        state_lock.inc_online(uuid);
+        state_lock.inc_online(user.uuid);
 
         send_metadata(state_lock, peer);
         send_online(state_lock);
 
-        Ok(RegisterResponse { uuid })
+        Ok(RegisterResponse { uuid: user.uuid })
     }
 }
 

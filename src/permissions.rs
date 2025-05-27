@@ -187,3 +187,29 @@ impl<'a> Deserialize<'a> for Permissions {
         Ok(arr.as_slice().into())
     }
 }
+impl Perm {
+    pub fn combine(self, other: Perm) -> Perm {
+        use Perm::*;
+        match (self, other) {
+            (_, Allow) => Allow,
+            (_, Deny) => Deny,
+            (s, Default) => s,
+        }
+    }
+}
+
+impl Permissions {
+    pub fn apply_over(&self, other: &Permissions) -> Permissions {
+        Permissions {
+            modify_channels: self.modify_channels.combine(other.modify_channels),
+            modify_icon_name: self.modify_icon_name.combine(other.modify_icon_name),
+            modify_groups: self.modify_groups.combine(other.modify_groups),
+            modify_user_groups: self.modify_user_groups.combine(other.modify_user_groups),
+            ban_users: self.ban_users.combine(other.ban_users),
+            send_messages: self.send_messages.combine(other.send_messages),
+            read_messages: self.read_messages.combine(other.read_messages),
+            manage_messages: self.manage_messages.combine(other.manage_messages),
+            join_voice: self.join_voice.combine(other.join_voice),
+        }
+    }
+}
