@@ -20,6 +20,7 @@ pub struct Shared {
     pub peers: Vec<(
         mpsc::UnboundedSender<serde_json::Value>,
         std::net::SocketAddr,
+        Option<Uuid>,
     )>,
 }
 
@@ -27,8 +28,6 @@ pub type DbError = rusqlite::Error;
 const LATEST_VERSION: i32 = 4;
 
 // TODO add unique constraints where applicable
-// TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO
-// hierarchy in groups/group perms etc
 fn latest_schema() -> String {
     format!(
         r#"
@@ -403,7 +402,7 @@ impl Shared {
         &self,
         message: serde_json::Value,
     ) -> Result<(), tokio::sync::mpsc::error::SendError<serde_json::Value>> {
-        for (tx, _) in self.peers.iter() {
+        for (tx, _, _) in self.peers.iter() {
             tx.send(message.clone())?;
         }
         Ok(())
@@ -882,6 +881,8 @@ impl Shared {
 
 #[cfg(test)]
 mod tests {
+    use std::{default, iter::FromIterator};
+
     use crate::permissions::Perm;
 
     use super::*;
@@ -898,6 +899,7 @@ mod tests {
 
     #[test]
     fn permissions_simple() {
+        use std::default::Default as Df;
         use Perm::*;
         let s = init();
         s.set_base_perms(Permissions {
@@ -916,15 +918,9 @@ mod tests {
         let g1 = Group {
             uuid: gen_uuid(),
             permissions: Permissions {
-                modify_channels: Default,
-                modify_icon_name: Default,
                 modify_groups: Deny,
-                modify_user_groups: Default,
-                ban_users: Default,
                 send_messages: Deny,
-                read_messages: Default,
-                manage_messages: Default,
-                join_voice: Default,
+                ..Df::default()
             },
             name: "G1".to_owned(),
             colour: 0xFF0000,
@@ -933,15 +929,9 @@ mod tests {
         let g2 = Group {
             uuid: gen_uuid(),
             permissions: Permissions {
-                modify_channels: Default,
-                modify_icon_name: Default,
                 modify_groups: Allow,
-                modify_user_groups: Default,
-                ban_users: Default,
-                send_messages: Default,
-                read_messages: Default,
-                manage_messages: Default,
                 join_voice: Allow,
+                ..Df::default()
             },
             name: "G2".to_owned(),
             colour: 0xF0F000,
@@ -958,21 +948,21 @@ mod tests {
             password: "".into(),
             groups: vec![g2.uuid, g1.uuid],
         };
-        let u4 = User {
+        let u2 = User {
             uuid: gen_uuid(),
             name: "u4".into(),
             pfp: "".into(),
             password: "".into(),
             groups: vec![g1.uuid, g2.uuid],
         };
-        let u2 = User {
+        let u3 = User {
             uuid: gen_uuid(),
             name: "u2".into(),
             pfp: "".into(),
             password: "".into(),
             groups: vec![g1.uuid],
         };
-        let u3 = User {
+        let u4 = User {
             uuid: gen_uuid(),
             name: "u3".into(),
             pfp: "".into(),
@@ -981,9 +971,36 @@ mod tests {
         };
 
         s.insert_user(&u1).unwrap();
-        s.insert_user(&u2).unwrap();
         s.insert_user(&u3).unwrap();
         s.insert_user(&u4).unwrap();
+        s.insert_user(&u2).unwrap();
+
+        let mut c1 = Channel {
+            uuid: gen_uuid(),
+            name: "c1".into(),
+            position: 0,
+            permissions: HashMap::new(),
+        };
+
+        c1.permissions.insert(
+            PermableEntity::Group(g2.uuid),
+            Permissions {
+                send_messages: Allow,
+                join_voice: Deny,
+                ..Df::default()
+            },
+        );
+        c1.permissions.insert(
+            PermableEntity::User(u2.uuid),
+            Permissions {
+                send_messages: Allow,
+                join_voice: Allow,
+                manage_messages: Allow,
+                ..Df::default()
+            },
+        );
+
+        s.insert_channel(&c1).unwrap();
 
         assert_eq!(
             s.resolve_server_permissions(&u1).unwrap(),
@@ -1000,16 +1017,30 @@ mod tests {
             }
         );
         assert_eq!(
-            s.resolve_server_permissions(&u4).unwrap(),
+            s.resolve_channel_permissions(&u1, &c1).unwrap(),
             Permissions {
                 modify_channels: Deny,
                 modify_icon_name: Deny,
                 modify_groups: Deny,
                 modify_user_groups: Deny,
                 ban_users: Deny,
-                send_messages: Deny,
+                send_messages: Allow,
                 read_messages: Allow,
                 manage_messages: Deny,
+                join_voice: Deny,
+            }
+        );
+        assert_eq!(
+            s.resolve_channel_permissions(&u2, &c1).unwrap(),
+            Permissions {
+                modify_channels: Deny,
+                modify_icon_name: Deny,
+                modify_groups: Deny,
+                modify_user_groups: Deny,
+                ban_users: Deny,
+                send_messages: Allow,
+                read_messages: Allow,
+                manage_messages: Allow,
                 join_voice: Allow,
             }
         );
@@ -1024,11 +1055,25 @@ mod tests {
                 send_messages: Deny,
                 read_messages: Allow,
                 manage_messages: Deny,
-                join_voice: Deny,
+                join_voice: Allow,
             }
         );
         assert_eq!(
             s.resolve_server_permissions(&u3).unwrap(),
+            Permissions {
+                modify_channels: Deny,
+                modify_icon_name: Deny,
+                modify_groups: Deny,
+                modify_user_groups: Deny,
+                ban_users: Deny,
+                send_messages: Deny,
+                read_messages: Allow,
+                manage_messages: Deny,
+                join_voice: Deny,
+            }
+        );
+        assert_eq!(
+            s.resolve_server_permissions(&u4).unwrap(),
             Permissions {
                 modify_channels: Deny,
                 modify_icon_name: Deny,
@@ -1077,15 +1122,14 @@ mod tests {
         shared.init_tables(init);
         shared.apply_migrations(migrations, 1, 2);
         assert_eq!(shared.get_db_version(), Some(2));
-        assert!(shared
+        shared
             .conn
             .execute_batch("INSERT INTO users VALUES (1, \"hello world\")")
-            .is_ok());
+            .unwrap();
         let q: Result<(i64, String), _> = shared.conn.query_row("select * from users", [], |row| {
             Ok((row.get(0)?, row.get(1)?))
         });
 
-        assert!(q.is_ok());
         let r = q.unwrap();
         assert_eq!(r.0, 1);
         assert_eq!(r.1, "hello world");
@@ -1130,7 +1174,6 @@ mod tests {
             Ok((row.get(0)?, row.get(1)?))
         });
 
-        assert!(q.is_ok());
         let r = q.unwrap();
         assert_eq!(r.0, 2);
         assert_eq!(r.1, "hi");
@@ -1183,16 +1226,15 @@ mod tests {
         shared.apply_migrations(migrations, 1, 3);
 
         assert_eq!(shared.get_db_version(), Some(3));
-        assert!(shared
+        shared
             .conn
             .execute_batch("INSERT INTO users VALUES (1, \"hello world\")")
-            .is_ok());
+            .unwrap();
 
         let q: Result<(i64, String), _> = shared.conn.query_row("select * from users", [], |row| {
             Ok((row.get(0)?, row.get(1)?))
         });
 
-        assert!(q.is_ok());
         let r = q.unwrap();
         assert_eq!(r.0, 1);
         assert_eq!(r.1, "hello world");
@@ -1202,7 +1244,6 @@ mod tests {
                 Ok((row.get(0)?, row.get(1)?))
             });
 
-        assert!(q.is_ok());
         let r = q.unwrap();
         assert_eq!(r.0, 2);
         assert_eq!(r.1, "hi");
@@ -1318,18 +1359,14 @@ mod tests {
     fn insert_user() {
         let s = init();
         let (u1, u2) = test_users();
-        assert!(s.insert_user(&u1).is_ok());
-        assert!(s.insert_user(&u2).is_ok());
+        s.insert_user(&u1).unwrap();
+        s.insert_user(&u2).unwrap();
     }
 
     #[test]
     fn get_user_by_name() {
         let (s, u1, _) = init_with_users();
-        let user_1_query = s.get_user_by_name(&u1.name);
-        assert!(user_1_query.is_ok());
-        let user_1_query = user_1_query.unwrap();
-        assert!(user_1_query.is_some());
-        let user_1_query = user_1_query.unwrap();
+        let user_1_query = s.get_user_by_name(&u1.name).unwrap().unwrap();
         assert_eq!(user_1_query.uuid, u1.uuid);
         assert_eq!(user_1_query.name, u1.name);
     }
@@ -1337,21 +1374,14 @@ mod tests {
     #[test]
     fn get_nonexistant_user_by_name() {
         let (s, _, _) = init_with_users();
-        let user_1_query = s.get_user_by_name("I am a nonexistant user");
-        assert!(user_1_query.is_ok());
-        let user_1_query = user_1_query.unwrap();
+        let user_1_query = s.get_user_by_name("I am a nonexistant user").unwrap();
         assert!(user_1_query.is_none());
     }
 
     #[test]
     fn get_user_by_uuid() {
         let (s, u1, _) = init_with_users();
-
-        let user_1_query = s.get_user(u1.uuid);
-        assert!(user_1_query.is_ok());
-        let user_1_query = user_1_query.unwrap();
-        assert!(user_1_query.is_some());
-        let user_1_query = user_1_query.unwrap();
+        let user_1_query = s.get_user(u1.uuid).unwrap().unwrap();
         assert_eq!(user_1_query.uuid, u1.uuid);
         assert_eq!(user_1_query.name, u1.name);
     }

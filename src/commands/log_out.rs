@@ -62,6 +62,13 @@ impl Request for RegisterRequest {
         state_lock.insert_user(&user)?;
         peer.uuid = Some(user.uuid);
 
+        // stoopid
+        for p in &mut state_lock.peers {
+            if p.1 == peer.addr {
+                p.2 = Some(user.uuid);
+            }
+        }
+
         state_lock.inc_online(user.uuid);
 
         send_metadata(state_lock, peer);

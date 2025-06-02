@@ -7,14 +7,15 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::helper::Uuid;
 
-#[derive(Clone, Copy, PartialEq, Debug)]
+#[derive(Clone, Copy, PartialEq, Debug, Default)]
 pub enum Perm {
     Allow,
     Deny,
+    #[default]
     Default,
 }
 
-#[derive(Clone, PartialEq, Debug)]
+#[derive(Clone, PartialEq, Debug, Default)]
 pub struct Permissions {
     pub modify_channels: Perm,
     pub modify_icon_name: Perm,
@@ -134,7 +135,7 @@ impl Serialize for Permissions {
     {
         let bytes: Box<[u8]> = self.into();
         let mut seq = serializer.serialize_seq(Some(bytes.len()))?;
-        for b in bytes {
+        for b in bytes.iter() {
             seq.serialize_element(&b)?;
         }
         seq.end()
