@@ -1,7 +1,10 @@
+use std::collections::HashMap;
+
 use crate::helper::{gen_uuid, LockedState};
 use crate::message::Message;
 use crate::models::{SyncData, SyncServer};
 use crate::peer::Peer;
+use crate::permissions::{Perm, PermableEntity, Permissions};
 use crate::{
     commands::{
         send_metadata, CmdError, Request,
@@ -13,6 +16,7 @@ use crate::{
 use serde::Deserialize;
 
 use super::auth::make_hash;
+use super::channel_perms;
 
 #[derive(Deserialize)]
 pub struct SendRequest {
@@ -78,7 +82,7 @@ pub struct CreateChannelRequest {
     pub channel_name: String,
 }
 
-#[derive(Deserialize)] 
+#[derive(Deserialize)]
 pub struct DeleteChannelRequest {
     pub channel: Uuid,
 }
@@ -89,6 +93,7 @@ pub struct UpdateChannelRequest {
     pub channel: Uuid,
     pub name: String,
     pub position: usize,
+    pub permissions: HashMap<PermableEntity, Permissions>,
 }
 
 impl Request for PasswordChangeRequest {
@@ -109,7 +114,7 @@ impl Request for PasswordChangeRequest {
 impl Request for EditRequest {
     fn execute(self, state_lock: &mut LockedState, peer: &mut Peer) -> Result<Response, CmdError> {
         if !peer.logged_in() {
-            return Ok(GenericResponse(Status::Forbidden));
+            return Ok(GenericResponse(Status::Unauthenticated));
         }
         let Some(message) = state_lock.get_message(self.message)? else {
             return Ok(GenericResponse(Status::NotFound));
@@ -136,12 +141,18 @@ impl Request for EditRequest {
 impl Request for DeleteRequest {
     fn execute(self, state_lock: &mut LockedState, peer: &mut Peer) -> Result<Response, CmdError> {
         if !peer.logged_in() {
-            return Ok(GenericResponse(Status::Forbidden));
+            return Ok(GenericResponse(Status::Unauthenticated));
         }
         let Some(message) = state_lock.get_message(self.message)? else {
             return Ok(GenericResponse(Status::NotFound));
         };
-        if Some(message.author_uuid) != peer.uuid {
+
+        let Some(channel) = state_lock.get_channel(&message.channel_uuid)? else {
+            return Ok(GenericResponse(Status::NotFound));
+        };
+
+        let perms = channel_perms(state_lock, peer.uuid, &channel)?;
+        if Some(message.author_uuid) != peer.uuid && perms.manage_messages != Perm::Allow {
             return Ok(GenericResponse(Status::Forbidden));
         }
 
@@ -162,7 +173,7 @@ impl Request for DeleteRequest {
 impl Request for NickRequest {
     fn execute(self, state_lock: &mut LockedState, peer: &mut Peer) -> Result<Response, CmdError> {
         if !peer.logged_in() {
-            return Ok(GenericResponse(Status::Forbidden));
+            return Ok(GenericResponse(Status::Unauthenticated));
         }
 
         // do not allow registering a duplicate username
@@ -188,7 +199,7 @@ impl Request for NickRequest {
 impl Request for OnlineRequest {
     fn execute(self, state_lock: &mut LockedState, peer: &mut Peer) -> Result<Response, CmdError> {
         if !peer.logged_in() {
-            return Ok(GenericResponse(Status::Forbidden));
+            return Ok(GenericResponse(Status::Unauthenticated));
         }
 
         Ok(OnlineResponse {
@@ -200,7 +211,7 @@ impl Request for OnlineRequest {
 impl Request for SendRequest {
     fn execute(self, state_lock: &mut LockedState, peer: &mut Peer) -> Result<Response, CmdError> {
         if !peer.logged_in() {
-            return Ok(GenericResponse(Status::Forbidden));
+            return Ok(GenericResponse(Status::Unauthenticated));
         }
         // Check for an empty message, or one that contains only whitespace
         if self.content.chars().all(|c| c.is_whitespace()) {
@@ -208,8 +219,14 @@ impl Request for SendRequest {
         }
 
         // check that we're sending to a channel that exists
-        if !state_lock.channel_exists(&self.channel)? {
+        let Some(channel) = state_lock.get_channel(&self.channel)? else {
             return Ok(GenericResponse(Status::NotFound));
+        };
+
+        // Make sure we have permission to send messages in this channel
+        let perms = channel_perms(state_lock, peer.uuid, &channel)?;
+        if perms.send_messages != Perm::Allow {
+            return Ok(GenericResponse(Status::Forbidden));
         }
 
         // check if we're replying to a message that it exists
@@ -238,7 +255,14 @@ impl Request for SendRequest {
         };
         let mut msg_json = serde_json::to_value(response)?;
         msg_json["status"] = (Status::Ok as i32).into();
-        state_lock.send_to_all(msg_json)?;
+        // TODO test!!!
+        // also stoopid
+        for (tx, addr, uuid) in state_lock.peers.iter() {
+            let perms = channel_perms(state_lock, *uuid, &channel)?;
+            if perms.read_messages == Perm::Allow {
+                tx.send(msg_json.clone())?;
+            }
+        }
         Ok(SendResponse { message: uuid })
     }
 }
@@ -246,10 +270,15 @@ impl Request for SendRequest {
 impl Request for HistoryRequest {
     fn execute(self, state_lock: &mut LockedState, peer: &mut Peer) -> Result<Response, CmdError> {
         if !peer.logged_in() {
-            return Ok(GenericResponse(Status::Forbidden));
+            return Ok(GenericResponse(Status::Unauthenticated));
         }
-        if state_lock.get_channel(&self.channel)?.is_none() {
+        let Some(channel) = state_lock.get_channel(&self.channel)? else {
             return Ok(GenericResponse(Status::NotFound));
+        };
+
+        let perms = channel_perms(state_lock, peer.uuid, &channel)?;
+        if perms.read_messages != Perm::Allow {
+            return Ok(GenericResponse(Status::Forbidden));
         }
 
         // history request may fail if before_message is not found. If that happens, catch this and return 404 not 500.
@@ -272,7 +301,7 @@ impl Request for HistoryRequest {
 impl Request for PfpRequest {
     fn execute(self, state_lock: &mut LockedState, peer: &mut Peer) -> Result<Response, CmdError> {
         if !peer.logged_in() {
-            return Ok(GenericResponse(Status::Forbidden));
+            return Ok(GenericResponse(Status::Unauthenticated));
         }
 
         // disallow profile pictures over 40kb, for now
@@ -298,7 +327,7 @@ impl Request for PfpRequest {
 impl Request for SyncSetRequest {
     fn execute(self, state_lock: &mut LockedState, peer: &mut Peer) -> Result<Response, CmdError> {
         if !peer.logged_in() {
-            return Ok(GenericResponse(Status::Forbidden));
+            return Ok(GenericResponse(Status::Unauthenticated));
         }
 
         let mut sync_data = match state_lock.get_sync_data(&peer.uuid.unwrap())? {
@@ -322,7 +351,7 @@ impl Request for SyncSetRequest {
 impl Request for SyncGetRequest {
     fn execute(self, state_lock: &mut LockedState, peer: &mut Peer) -> Result<Response, CmdError> {
         if !peer.logged_in() {
-            return Ok(GenericResponse(Status::Forbidden));
+            return Ok(GenericResponse(Status::Unauthenticated));
         }
 
         let sync_data = state_lock.get_sync_data(&peer.uuid.unwrap())?;
@@ -335,7 +364,7 @@ impl Request for SyncGetRequest {
 impl Request for SyncSetServersRequest {
     fn execute(self, state_lock: &mut LockedState, peer: &mut Peer) -> Result<Response, CmdError> {
         if !peer.logged_in() {
-            return Ok(GenericResponse(Status::Forbidden));
+            return Ok(GenericResponse(Status::Unauthenticated));
         }
 
         state_lock.clear_sync_servers_of(peer.uuid.unwrap())?;
@@ -354,7 +383,7 @@ impl Request for SyncSetServersRequest {
 impl Request for SyncGetServersRequest {
     fn execute(self, state_lock: &mut LockedState, peer: &mut Peer) -> Result<Response, CmdError> {
         if !peer.logged_in() {
-            return Ok(GenericResponse(Status::Forbidden));
+            return Ok(GenericResponse(Status::Unauthenticated));
         }
         let servers = state_lock.get_sync_servers(peer.uuid.unwrap())?;
 

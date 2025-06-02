@@ -36,7 +36,7 @@ use crate::commands::send_online;
 use peer::Peer;
 use shared::Shared;
 
-const API_VERSION: [u8; 3] = [0, 2, 0]; // major, minor, patch
+const API_VERSION: [u8; 3] = [1, 0, 0]; // major, minor, patch
 
 //DEBUG
 // type SocketStream = TcpStream;
@@ -230,7 +230,7 @@ async fn process(
 
     {
         let mut state = state.lock().await;
-        state.peers.push((peer.tx.clone(), peer.addr));
+        state.peers.push((peer.tx.clone(), peer.addr, peer.uuid));
     }
     peer.tx
         .send(json!({"command": "API_version", "version": API_VERSION, "status": 200}))?;
