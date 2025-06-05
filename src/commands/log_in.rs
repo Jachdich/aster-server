@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use crate::helper::{gen_uuid, LockedState};
 use crate::message::Message;
-use crate::models::{SyncData, SyncServer};
+use crate::models::{Channel, SyncData, SyncServer};
 use crate::peer::Peer;
 use crate::permissions::{Perm, PermableEntity, Permissions};
 use crate::{
@@ -79,7 +79,9 @@ pub struct PasswordChangeRequest {
 
 #[derive(Deserialize)]
 pub struct CreateChannelRequest {
-    pub channel_name: String,
+    pub name: String,
+    pub position: usize,
+    pub permissions: HashMap<PermableEntity, Permissions>,
 }
 
 #[derive(Deserialize)]
@@ -90,10 +92,8 @@ pub struct DeleteChannelRequest {
 /// Position is new position channel should take. Updates all other channel positions to allow this.
 #[derive(Deserialize)]
 pub struct UpdateChannelRequest {
-    pub channel: Uuid,
-    pub name: String,
-    pub position: usize,
-    pub permissions: HashMap<PermableEntity, Permissions>,
+    #[serde(flatten)]
+    pub channel: Channel,
 }
 
 impl Request for PasswordChangeRequest {

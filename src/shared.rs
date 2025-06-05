@@ -463,6 +463,39 @@ impl Shared {
         }
     }
 
+    // TEST
+    /// Get the [`User`] from the database with the given id
+    /// This function assumes the user exists - it returns `Err(rusqlite::Error::QueryReturnedNoRows)`
+    /// if the user does not exist.
+    pub fn get_user_exists(&self, user_uuid: Uuid) -> Result<User, DbError> {
+        match self.get_user(user_uuid) {
+            Ok(Some(user)) => Ok(user),
+            Ok(None) => Err(DbError::QueryReturnedNoRows),
+            Err(e) => Err(e),
+        }
+    }
+
+    // TEST
+    pub fn get_highest_group_pos_of(&self, user: Uuid) -> Result<usize, DbError> {
+        let us = self.get_user_exists(user)?;
+        let mut highest_role = usize::MAX;
+        for g in &us.groups {
+            let g_pos = self.get_group_exists(*g)?.position;
+            if g_pos < highest_role {
+                highest_role = g_pos;
+            }
+        }
+        Ok(highest_role)
+    }
+
+    // TEST
+    pub fn delete_group(&self, uuid: Uuid) -> Result<(), DbError> {
+        self.conn
+            .prepare("delete from groups where uuid = ?1")?
+            .execute([uuid])?;
+        Ok(())
+    }
+
     pub fn get_group_uuids_of(&self, user_uuid: Uuid) -> Result<Vec<Uuid>, DbError> {
         self.conn
             .prepare("SELECT * FROM user_groups WHERE user_uuid = ?1")?

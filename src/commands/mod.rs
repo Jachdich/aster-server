@@ -12,7 +12,7 @@ use crate::helper::{gen_uuid, JsonValue, LockedState, Uuid};
 use crate::message::Message;
 use crate::peer::Peer;
 
-use crate::models::{Channel, Emoji, SyncData, SyncServer, User};
+use crate::models::{Channel, Emoji, Group, SyncData, SyncServer, User};
 use crate::permissions::{Perm, Permissions};
 use crate::shared::DbError;
 use enum_dispatch::enum_dispatch;
@@ -38,6 +38,32 @@ impl Serialize for Status {
         serializer.serialize_i32(*self as i32)
     }
 }
+
+#[derive(Deserialize)]
+pub struct CreateGroupRequest {
+    pub permissions: Permissions,
+    pub name: String,
+    pub colour: i32,
+    pub position: usize,
+}
+
+#[derive(Deserialize)]
+pub struct DeleteGroupRequest {
+    pub uuid: Uuid,
+}
+
+#[derive(Deserialize)]
+pub struct UpdateGroupRequest {
+    #[serde(flatten)]
+    pub g: Group,
+}
+
+#[derive(Deserialize)]
+pub struct UpdateUserGroupsRequest {
+    pub user: Uuid,
+    pub groups: Vec<Uuid>,
+}
+
 /// # API Docs
 /// For documentation of each packet, its fields, and when it may be sent; see its respective struct's documentation.
 /// ## Overview
@@ -101,6 +127,10 @@ pub enum Requests {
     #[serde(rename = "create_channel")]   CreateChannelRequest,
     #[serde(rename = "delete_channel")]   DeleteChannelRequest,
     #[serde(rename = "update_channel")]   UpdateChannelRequest,
+    #[serde(rename = "create_group")]     CreateGroupRequest,
+    #[serde(rename = "delete_group")]     DeleteGroupRequest,
+    #[serde(rename = "update_group")]     UpdateGroupRequest,
+    #[serde(rename = "update_user_groups")] UpdateUserGroupsRequest,
 }
 
 #[derive(Serialize)]
@@ -122,6 +152,7 @@ pub enum Response {
     #[serde(rename = "send")]             SendResponse { message: Uuid },
     #[serde(rename = "message_edited")]   MessageEditedResponse { message: Uuid, new_content: String },
     #[serde(rename = "message_deleted")]  MessageDeletedResponse { message: Uuid },
+    #[serde(rename = "list_groups")]      ListGroupsResponse { data: Vec<Group> },
 
     #[serde(rename = "content")]
     ContentResponse {
@@ -161,9 +192,107 @@ pub fn server_perms(state_lock: &LockedState, peer: &Peer) -> Result<Permissions
     let user = state_lock.get_user(peer.uuid.unwrap())?.unwrap();
     state_lock.resolve_server_permissions(&user)
 }
-pub fn channel_perms(state_lock: &LockedState, uuid: Option<Uuid>, channel: &Channel) -> Result<Permissions, DbError> {
+pub fn channel_perms(
+    state_lock: &LockedState,
+    uuid: Option<Uuid>,
+    channel: &Channel,
+) -> Result<Permissions, DbError> {
     let user = state_lock.get_user(uuid.unwrap())?.unwrap();
     state_lock.resolve_channel_permissions(&user, channel)
+}
+
+impl Request for UpdateUserGroupsRequest {
+    fn execute(self, state_lock: &mut LockedState, peer: &mut Peer) -> Result<Response, CmdError> {
+        if !peer.logged_in() {
+            return Ok(GenericResponse(Status::Unauthenticated));
+        }
+        if server_perms(state_lock, peer)?.modify_user_groups != Perm::Allow {
+            return Ok(GenericResponse(Status::Forbidden));
+        }
+
+        let Some(mut user) = state_lock.get_user(self.user)? else {
+            return Ok(GenericResponse(Status::NotFound));
+        };
+
+        for g in &self.groups {
+            if state_lock.get_group(*g)?.is_none() {
+                return Ok(GenericResponse(Status::NotFound));
+            }
+        }
+
+        user.groups = self.groups;
+        state_lock.update_user(&user)?;
+
+        Ok(GenericResponse(Status::Ok))
+    }
+}
+
+impl Request for CreateGroupRequest {
+    fn execute(self, state_lock: &mut LockedState, peer: &mut Peer) -> Result<Response, CmdError> {
+        if !peer.logged_in() {
+            return Ok(GenericResponse(Status::Unauthenticated));
+        }
+        if server_perms(state_lock, peer)?.modify_groups != Perm::Allow {
+            return Ok(GenericResponse(Status::Forbidden));
+        }
+
+        // forbid altering higher groups
+        let highest_role = state_lock.get_highest_group_pos_of(peer.uuid.unwrap())?;
+        if self.position <= highest_role {
+            return Ok(GenericResponse(Status::Forbidden));
+        }
+
+        state_lock.insert_group(&Group {
+            uuid: gen_uuid(),
+            permissions: self.permissions,
+            name: self.name,
+            colour: self.colour,
+            position: self.position,
+        })?;
+        // TODO update positions
+        todo!();
+    }
+}
+impl Request for DeleteGroupRequest {
+    fn execute(self, state_lock: &mut LockedState, peer: &mut Peer) -> Result<Response, CmdError> {
+        if !peer.logged_in() {
+            return Ok(GenericResponse(Status::Unauthenticated));
+        }
+        if server_perms(state_lock, peer)?.modify_groups != Perm::Allow {
+            return Ok(GenericResponse(Status::Forbidden));
+        }
+
+        let Some(group) = state_lock.get_group(self.uuid)? else {
+            return Ok(GenericResponse(Status::NotFound));
+        };
+
+        // forbid altering higher groups
+        let highest_group = state_lock.get_highest_group_pos_of(peer.uuid.unwrap())?;
+        if group.position <= highest_group {
+            return Ok(GenericResponse(Status::Forbidden));
+        }
+
+        state_lock.delete_group(self.uuid)?;
+
+        todo!();
+    }
+}
+impl Request for UpdateGroupRequest {
+    fn execute(self, state_lock: &mut LockedState, peer: &mut Peer) -> Result<Response, CmdError> {
+        if !peer.logged_in() {
+            return Ok(GenericResponse(Status::Unauthenticated));
+        }
+        if server_perms(state_lock, peer)?.modify_groups != Perm::Allow {
+            return Ok(GenericResponse(Status::Forbidden));
+        }
+
+        // forbid altering higher groups
+        let highest_role = state_lock.get_highest_group_pos_of(peer.uuid.unwrap())?;
+        if self.g.position <= highest_role {
+            return Ok(GenericResponse(Status::Forbidden));
+        }
+        todo!();
+    }
 }
 
 impl Request for CreateChannelRequest {
@@ -175,14 +304,23 @@ impl Request for CreateChannelRequest {
             return Ok(GenericResponse(Status::Forbidden));
         }
 
-        let next_position = state_lock.get_channels()?.iter().map(|c| c.position as isize).max().unwrap_or(-1) + 1;
+        let next_position = state_lock
+            .get_channels()?
+            .iter()
+            .map(|c| c.position as isize)
+            .max()
+            .unwrap_or(-1)
+            + 1;
         state_lock.insert_channel(&Channel {
             uuid: gen_uuid(),
-            name: self.channel_name,
+            name: self.name,
             permissions: HashMap::new(),
             position: next_position as usize,
         })?;
         update_channels(state_lock)?;
+        // TODO update positions
+        // TODO forbid altering permissions for higher roles
+        todo!();
         Ok(GenericResponse(Status::Ok))
     }
 }
@@ -196,6 +334,7 @@ impl Request for DeleteChannelRequest {
         }
 
         state_lock.delete_channel(self.channel)?;
+        // TODO update positions
         update_channels(state_lock)?;
         Ok(GenericResponse(Status::Ok))
     }
@@ -210,20 +349,20 @@ impl Request for UpdateChannelRequest {
         }
 
         let channels = state_lock.get_channels()?;
-        let Some(old_channel) = state_lock.get_channel(&self.channel)? else {
+        let Some(old_channel) = state_lock.get_channel(&self.channel.uuid)? else {
             return Ok(GenericResponse(Status::NotFound));
         };
 
         // unwrap ok, because we know there must be at least one channel as it exists
-        if self.position > channels.last().unwrap().position {
+        if self.channel.position > channels.last().unwrap().position {
             return Ok(GenericResponse(Status::BadRequest));
         }
 
         // recalculate channel positions, given the position of this channel
         // TODO maybe use a transaction...
-        if old_channel.position < self.position {
+        if old_channel.position < self.channel.position {
             for c in channels {
-                if c.position > old_channel.position && c.position <= self.position {
+                if c.position > old_channel.position && c.position <= self.channel.position {
                     state_lock.update_channel(&Channel {
                         uuid: c.uuid,
                         name: c.name,
@@ -232,9 +371,9 @@ impl Request for UpdateChannelRequest {
                     })?;
                 }
             }
-        } else if old_channel.position > self.position {
+        } else if old_channel.position > self.channel.position {
             for c in channels {
-                if c.position >= self.position && c.position < old_channel.position {
+                if c.position >= self.channel.position && c.position < old_channel.position {
                     state_lock.update_channel(&Channel {
                         uuid: c.uuid,
                         name: c.name,
@@ -244,14 +383,11 @@ impl Request for UpdateChannelRequest {
                 }
             }
         }
-        state_lock.update_channel(&Channel {
-            uuid: self.channel,
-            name: self.name,
-            position: self.position,
-            permissions: self.permissions,
-        })?;
+        state_lock.update_channel(&self.channel)?;
 
         update_channels(state_lock)?;
+        // TODO forbid altering permissions for higher roles
+        todo!();
         Ok(GenericResponse(Status::Ok))
     }
 }
