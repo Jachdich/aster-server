@@ -18,79 +18,175 @@ pub struct Shared {
 }
 
 type DbError = rusqlite::Error;
-const LATEST_VERSION: i32 = 2;
+pub const LATEST_VERSION: i32 = 3; //bumped this up to three to let the migration system know the db has a newer target schema
 
 // TODO add unique constraints where applicable
+//
+// completely changed this function
+// rewrote the entire SQL string so that it now creates files (stores every uploads metadata), creates attachments.
+// also added this bit: ALTER TABLE users ADD COLUMN avatar_file_id (nullable fk to files)
+// nothing else changed me thinks
 fn latest_schema() -> String {
     format!(
         r#"
 BEGIN;
-CREATE TABLE version (
-    version integer NOT NULL
+
+/* version tracking */
+CREATE TABLE IF NOT EXISTS version (
+    version INTEGER NOT NULL
 );
-INSERT INTO version VALUES({});
-CREATE TABLE channels (
-    uuid BigInt PRIMARY KEY NOT NULL,
-    name text NOT NULL,
-    position Integer NOT NULL
+INSERT OR IGNORE INTO version VALUES({0});
+
+/* existing tables */
+CREATE TABLE IF NOT EXISTS users (
+    uuid        BIGINT PRIMARY KEY NOT NULL,
+    name        TEXT  NOT NULL,
+    pfp         TEXT  NOT NULL,
+    group_uuid  BIGINT NOT NULL,
+    password    TEXT  NOT NULL,
+    FOREIGN KEY (group_uuid) REFERENCES groups(uuid)
 );
-INSERT INTO channels VALUES ({}, "general", 0);
-CREATE TABLE messages (
-    uuid BigInt PRIMARY KEY NOT NULL,
-    content text NOT NULL,
-    author_uuid BigInt NOT NULL,
-    channel_uuid BigInt NOT NULL,
-    date integer NOT NULL,
-    edited Integer not null default 0,
-    reply BigInt,
-    FOREIGN KEY (author_uuid) REFERENCES users(uuid),
+
+CREATE TABLE IF NOT EXISTS channels (
+    uuid     BIGINT PRIMARY KEY NOT NULL,
+    name     TEXT    NOT NULL,
+    position INTEGER NOT NULL
+);
+INSERT OR IGNORE INTO channels VALUES (0, 'general', 0);
+
+CREATE TABLE IF NOT EXISTS messages (
+    uuid         BIGINT PRIMARY KEY NOT NULL,
+    content      TEXT   NOT NULL,
+    author_uuid  BIGINT NOT NULL,
+    channel_uuid BIGINT NOT NULL,
+    date         INTEGER NOT NULL,
+    edited       INTEGER NOT NULL DEFAULT 0,
+    reply        BIGINT,
+    FOREIGN KEY (author_uuid)  REFERENCES users(uuid),
     FOREIGN KEY (channel_uuid) REFERENCES channels(uuid)
 );
-CREATE TABLE users (
-    uuid BigInt PRIMARY KEY NOT NULL,
-    name text NOT NULL,
-    pfp text NOT NULL,
-    group_uuid BigInt NOT NULL,
-    password text NOT NULL,
+
+CREATE TABLE IF NOT EXISTS groups (
+    uuid        BIGINT PRIMARY KEY NOT NULL,
+    permissions BIGINT NOT NULL,
+    name        TEXT   NOT NULL,
+    colour      INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS user_groups (
+    link_id    INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_uuid  BIGINT NOT NULL,
+    group_uuid BIGINT NOT NULL,
+    FOREIGN KEY (user_uuid)  REFERENCES users(uuid),
     FOREIGN KEY (group_uuid) REFERENCES groups(uuid)
 );
-CREATE TABLE groups (
-    uuid BigInt PRIMARY KEY NOT NULL,
-    permissions BigInt NOT NULL,
-    name text NOT NULL,
-    colour integer NOT NULL
+
+CREATE TABLE IF NOT EXISTS sync_data (
+    user_uuid BIGINT PRIMARY KEY NOT NULL,
+    uname     TEXT NOT NULL,
+    pfp       TEXT NOT NULL
 );
-CREATE TABLE user_groups (
-    link_id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_uuid BigInt NOT NULL,
-    group_uuid BigInt NOT NULL,
-    FOREIGN KEY (user_uuid) REFERENCES users(uuid),
-    FOREIGN KEY (group_uuid) REFERENCES groups(uuid)
+
+CREATE TABLE IF NOT EXISTS emojis (
+    uuid BIGINT PRIMARY KEY NOT NULL,
+    name TEXT NOT NULL,
+    data TEXT NOT NULL
 );
-CREATE TABLE sync_data (
-    user_uuid BigInt PRIMARY KEY NOT NULL,
-    uname text NOT NULL,
-    pfp text NOT NULL
+
+CREATE TABLE IF NOT EXISTS sync_servers (
+    user_uuid BIGINT NOT NULL,
+    uuid      BIGINT,
+    uname     TEXT NOT NULL,
+    ip        TEXT NOT NULL,
+    port      INTEGER NOT NULL,
+    pfp       TEXT,
+    name      TEXT,
+    idx       INTEGER NOT NULL
 );
-CREATE TABLE emojis (
-    uuid BigInt PRIMARY KEY NOT NULL,
-    name text NOT NULL,
-    data text NOT NULL
+
+/* new tables for images */
+CREATE TABLE IF NOT EXISTS files (
+    id           INTEGER PRIMARY KEY NOT NULL,
+    uploader_id  BIGINT  NOT NULL,
+    kind         TEXT    NOT NULL,
+    content_type TEXT    NOT NULL,
+    byte_size    INTEGER NOT NULL,
+    width        INTEGER,
+    height       INTEGER,
+    sha256       BLOB    NOT NULL,
+    created_at   INTEGER NOT NULL
 );
-CREATE TABLE sync_servers (
-    user_uuid BigInt NOT NULL,
-    uuid BigInt,
-    uname Text NOT NULL,
-    ip Text NOT NULL,
-    port Integer NOT NULL,
-    pfp Text,
-    name Text,
-    idx Integer NOT NULL
+
+CREATE TABLE IF NOT EXISTS attachments (
+    message_id  BIGINT NOT NULL,
+    file_id     INTEGER NOT NULL,
+    order_index INTEGER NOT NULL,
+    PRIMARY KEY(message_id, file_id)
 );
-COMMIT;"#,
-        LATEST_VERSION,
-        gen_uuid()
+
+COMMIT;
+"#,
+        LATEST_VERSION // <-- {0}
     )
+}
+fn maybe_add_avatar_column(conn: &rusqlite::Connection) -> rusqlite::Result<()> {
+    match conn.execute("ALTER TABLE users ADD COLUMN avatar_file_id INTEGER;", []) {
+        Ok(_) => Ok(()), // column added now
+        Err(rusqlite::Error::SqliteFailure(_, Some(ref msg)))
+            if msg.contains("duplicate column") =>
+        {
+            // Column already exists – ignore
+            Ok(())
+        }
+        Err(e) => Err(e), // anything else should bubble up
+    }
+}
+
+pub fn run_migrations(conn: &Connection) -> rusqlite::Result<()> {
+    // Try to read the current version. If the table isn’t there yet,
+    // assume this is a brand-new DB (version = 0).
+    let current: i32 = conn
+        .query_row("SELECT version FROM version", [], |r| r.get(0))
+        .optional()?
+        .unwrap_or(0);
+
+    if current == 0 {
+        // brand-new file: lay down the full v3 schema in one shot
+        conn.execute_batch(&latest_schema())?;
+    } else if current < 3 {
+        migrate_to_v3(conn)?;
+        maybe_add_avatar_column(conn)?; // incremental delta
+    }
+    Ok(())
+}
+
+/// Delta from v2 → v3 (adds image tables and avatar column).
+fn migrate_to_v3(conn: &Connection) -> rusqlite::Result<()> {
+    conn.execute_batch(
+        r#"
+BEGIN;
+CREATE TABLE IF NOT EXISTS files (
+    id           INTEGER PRIMARY KEY NOT NULL,
+    uploader_id  BIGINT  NOT NULL,
+    kind         TEXT    NOT NULL,
+    content_type TEXT    NOT NULL,
+    byte_size    INTEGER NOT NULL,
+    width        INTEGER,
+    height       INTEGER,
+    sha256       BLOB    NOT NULL,
+    created_at   INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS attachments (
+    message_id  BIGINT NOT NULL,
+    file_id     INTEGER NOT NULL,
+    order_index INTEGER NOT NULL,
+    PRIMARY KEY(message_id, file_id)
+);
+UPDATE version SET version = 3;
+COMMIT;
+"#,
+    )?;
+    Ok(())
 }
 
 struct Migration {

@@ -27,4 +27,5 @@ env_logger = "0.10.0"
 anyhow = "1.0.71"
 rusqlite = "0.32.1"
 futures = "0.3.31"
-
+sha2 = "0.10"
+mime_guess = "2"
