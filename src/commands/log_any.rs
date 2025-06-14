@@ -15,8 +15,6 @@ pub struct GetNameRequest;
 #[derive(Deserialize)]
 pub struct GetMetadataRequest;
 #[derive(Deserialize)]
-pub struct ListChannelsRequest;
-#[derive(Deserialize)]
 pub struct ListEmojiRequest;
 #[derive(Deserialize)]
 pub struct LeaveRequest;
@@ -62,13 +60,6 @@ impl Request for GetNameRequest {
         Ok(GetNameResponse {
             data: CONF.name.to_owned(),
         })
-    }
-}
-
-impl Request for ListChannelsRequest {
-    fn execute(self, state_lock: &mut LockedState, _: &mut Peer) -> Result<Response, CmdError> {
-        let channels = state_lock.get_channels()?;
-        Ok(ListChannelsResponse { data: channels })
     }
 }
 
