@@ -26,6 +26,7 @@ pub struct Permissions {
     pub read_messages: Perm,
     pub manage_messages: Perm,
     pub join_voice: Perm,
+    pub view_this_channel: Perm,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Hash, Serialize, Deserialize)]
@@ -91,6 +92,7 @@ impl From<&[u8]> for Permissions {
             read_messages: get_perm(6),
             manage_messages: get_perm(7),
             join_voice: get_perm(8),
+            view_this_channel: get_perm(9),
         }
     }
 }
@@ -114,7 +116,7 @@ impl From<&Permissions> for Box<[u8]> {
             ]),
             perms_to_byte([
                 value.join_voice,
-                Perm::Default,
+                value.view_this_channel,
                 Perm::Default,
                 Perm::Default,
             ]),
@@ -211,6 +213,7 @@ impl Permissions {
             read_messages: self.read_messages.combine(other.read_messages),
             manage_messages: self.manage_messages.combine(other.manage_messages),
             join_voice: self.join_voice.combine(other.join_voice),
+            view_this_channel: self.view_this_channel.combine(other.view_this_channel),
         }
     }
 }

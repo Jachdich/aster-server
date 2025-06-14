@@ -224,6 +224,7 @@ const MIGRATIONS: &[Migration] = &[
                 read_messages: Perm::Allow,
                 manage_messages: Perm::Deny,
                 join_voice: Perm::Allow,
+                view_this_channel: Perm::Allow,
             };
             let perm_bytes: Box<[u8]> = default_base_perms.into();
             sqlitedb.execute("INSERT INTO server_config VALUES (?1, ?2, ?3)", params![&CONF.name, pfp_bytes, perm_bytes.into_vec()])?;
@@ -312,6 +313,7 @@ impl Shared {
             read_messages: Perm::Allow,
             manage_messages: Perm::Deny,
             join_voice: Perm::Allow,
+            view_this_channel: Perm::Allow,
         };
         let perm_bytes: Box<[u8]> = default_base_perms.into();
         self.conn
@@ -570,12 +572,38 @@ impl Shared {
             .collect()
     }
 
+    // TEST
+    pub fn get_groups(&self) -> Result<Vec<Group>, DbError> {
+        self.conn
+            .prepare("SELECT * FROM groups")?
+            .query_map([], |row| {
+                let perms: Vec<u8> = row.get(3)?;
+                let permissions: Permissions = perms.as_slice().into();
+                Ok(Group {
+                    uuid: row.get(0)?,
+                    name: row.get(1)?,
+                    colour: row.get(2)?,
+                    permissions,
+                    position: row.get(4)?,
+                })
+            })?
+            .collect()
+    }
+
     pub fn channel_exists(&self, uuid: &Uuid) -> Result<bool, DbError> {
         // TODO this might be slow
         Ok(self
             .get_channels()?
             .iter()
             .any(|channel| channel.uuid == *uuid))
+    }
+
+    pub fn update_group(&self, g: &Group) -> Result<(), DbError> {
+        let perms: Box<[u8]> = g.permissions.clone().into();
+        self.conn
+            .prepare("update groups set name = ?1, colour = ?2, permissions = ?3, position = ?4 where uuid = ?5")?
+            .execute(params![g.name, g.colour, perms.to_vec(), g.position, g.uuid])?;
+        Ok(())
     }
 
     pub fn update_channel(&self, c: &Channel) -> Result<(), DbError> {
@@ -914,8 +942,6 @@ impl Shared {
 
 #[cfg(test)]
 mod tests {
-    use std::{default, iter::FromIterator};
-
     use crate::permissions::Perm;
 
     use super::*;
@@ -945,6 +971,7 @@ mod tests {
             read_messages: Allow,
             manage_messages: Deny,
             join_voice: Deny,
+            view_this_channel: Deny,
         })
         .unwrap();
 
@@ -1047,6 +1074,7 @@ mod tests {
                 read_messages: Allow,
                 manage_messages: Deny,
                 join_voice: Allow,
+                view_this_channel: Deny,
             }
         );
         assert_eq!(
@@ -1061,6 +1089,7 @@ mod tests {
                 read_messages: Allow,
                 manage_messages: Deny,
                 join_voice: Deny,
+                view_this_channel: Deny,
             }
         );
         assert_eq!(
@@ -1075,6 +1104,7 @@ mod tests {
                 read_messages: Allow,
                 manage_messages: Allow,
                 join_voice: Allow,
+                view_this_channel: Deny,
             }
         );
         assert_eq!(
@@ -1089,6 +1119,7 @@ mod tests {
                 read_messages: Allow,
                 manage_messages: Deny,
                 join_voice: Allow,
+                view_this_channel: Deny,
             }
         );
         assert_eq!(
@@ -1103,6 +1134,7 @@ mod tests {
                 read_messages: Allow,
                 manage_messages: Deny,
                 join_voice: Deny,
+                view_this_channel: Deny,
             }
         );
         assert_eq!(
@@ -1117,6 +1149,7 @@ mod tests {
                 read_messages: Allow,
                 manage_messages: Deny,
                 join_voice: Deny,
+                view_this_channel: Deny,
             }
         );
     }
@@ -1336,6 +1369,7 @@ mod tests {
                 read_messages: Perm::Allow,
                 manage_messages: Perm::Allow,
                 join_voice: Perm::Allow,
+                view_this_channel: Perm::Allow,
             },
         );
 

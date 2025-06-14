@@ -16,7 +16,7 @@ use crate::{
 use serde::Deserialize;
 
 use super::auth::make_hash;
-use super::channel_perms;
+use super::{channel_perms, get_viewable_channels};
 
 #[derive(Deserialize)]
 pub struct SendRequest {
@@ -94,6 +94,33 @@ pub struct DeleteChannelRequest {
 pub struct UpdateChannelRequest {
     #[serde(flatten)]
     pub channel: Channel,
+}
+
+#[derive(Deserialize)]
+pub struct ListChannelsRequest;
+#[derive(Deserialize)]
+pub struct ListGroupsRequest;
+
+impl Request for ListChannelsRequest {
+    fn execute(self, state_lock: &mut LockedState, peer: &mut Peer) -> Result<Response, CmdError> {
+        if !peer.logged_in() {
+            return Ok(GenericResponse(Status::Unauthenticated));
+        }
+        let user = state_lock.get_user_exists(peer.uuid.unwrap())?;
+        let channels = state_lock.get_channels()?;
+        let our_channels = get_viewable_channels(state_lock, &channels, &user)?;
+        Ok(ListChannelsResponse { data: our_channels })
+    }
+}
+
+impl Request for ListGroupsRequest {
+    fn execute(self, state_lock: &mut LockedState, peer: &mut Peer) -> Result<Response, CmdError> {
+        if !peer.logged_in() {
+            return Ok(GenericResponse(Status::Unauthenticated));
+        }
+        let groups = state_lock.get_groups()?;
+        Ok(ListGroupsResponse { data: groups })
+    }
 }
 
 impl Request for PasswordChangeRequest {
@@ -250,14 +277,12 @@ impl Request for SendRequest {
 
         let uuid = msg.uuid; // save for later
 
-        let response = ContentResponse {
-            message: msg.into(),
-        };
+        let response = ContentResponse { message: msg };
         let mut msg_json = serde_json::to_value(response)?;
         msg_json["status"] = (Status::Ok as i32).into();
         // TODO test!!!
         // also stoopid
-        for (tx, addr, uuid) in state_lock.peers.iter() {
+        for (tx, _, uuid) in state_lock.peers.iter() {
             let perms = channel_perms(state_lock, *uuid, &channel)?;
             if perms.read_messages == Perm::Allow {
                 tx.send(msg_json.clone())?;

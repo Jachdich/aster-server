@@ -3,10 +3,12 @@ mod log_any;
 mod log_in;
 mod log_out;
 
+use futures::channel::mpsc::UnboundedSender;
 //use auth::*;
 use log_any::*;
 use log_in::*;
 use log_out::*;
+use rand::seq::SliceRandom;
 
 use crate::helper::{gen_uuid, JsonValue, LockedState, Uuid};
 use crate::message::Message;
@@ -131,6 +133,7 @@ pub enum Requests {
     #[serde(rename = "delete_group")]     DeleteGroupRequest,
     #[serde(rename = "update_group")]     UpdateGroupRequest,
     #[serde(rename = "update_user_groups")] UpdateUserGroupsRequest,
+    #[serde(rename = "list_groups")]      ListGroupsRequest,
 }
 
 #[derive(Serialize)]
@@ -175,14 +178,115 @@ pub enum Response {
 type CmdError = anyhow::Error;
 use Response::*;
 
+// This is over-engineered
+trait HasOrder {
+    fn pos(&self) -> usize;
+    fn with_pos(self, pos: usize) -> Self;
+}
+
+impl HasOrder for Channel {
+    fn pos(&self) -> usize {
+        self.position
+    }
+    fn with_pos(self, pos: usize) -> Self {
+        Self {
+            uuid: self.uuid,
+            name: self.name,
+            position: pos,
+            permissions: self.permissions,
+        }
+    }
+}
+impl HasOrder for Group {
+    fn pos(&self) -> usize {
+        self.position
+    }
+    fn with_pos(self, pos: usize) -> Self {
+        Self {
+            uuid: self.uuid,
+            permissions: self.permissions,
+            name: self.name,
+            colour: self.colour,
+            position: pos,
+        }
+    }
+}
+
+fn moveto<T: HasOrder, F: FnMut(T) -> Result<(), DbError>>(
+    from: usize,
+    to: usize,
+    things: Vec<T>,
+    mut update_thing: F,
+) -> Result<(), DbError> {
+    // recalculate channel positions, given the position of this channel
+    // TODO maybe use a transaction...
+    if from == to {
+        return Ok(());
+    }
+
+    if from < to {
+        for c in things {
+            if c.pos() == from {
+                update_thing(c.with_pos(to))?;
+            } else if c.pos() > from && c.pos() <= to {
+                let pos = c.pos();
+                update_thing(c.with_pos(pos - 1))?;
+            }
+        }
+    } else if from > to {
+        for c in things {
+            if c.pos() == from {
+                update_thing(c.with_pos(to))?;
+            } else if c.pos() >= to && c.pos() < from {
+                let pos = c.pos();
+                update_thing(c.with_pos(pos + 1))?;
+            }
+        }
+    }
+
+    Ok(())
+}
+
 #[enum_dispatch(Requests)]
 pub trait Request {
     fn execute(self, state_lock: &mut LockedState, peer: &mut Peer) -> Result<Response, CmdError>;
 }
 
+fn get_viewable_channels(
+    state_lock: &LockedState,
+    all_channels: &[Channel],
+    user: &User,
+) -> Result<Vec<Channel>, CmdError> {
+    let mut our_channels = Vec::new();
+    for channel in all_channels {
+        if state_lock
+            .resolve_channel_permissions(user, channel)?
+            .view_this_channel
+            == Perm::Allow
+        {
+            our_channels.push(channel.clone());
+        }
+    }
+    Ok(our_channels)
+}
+
 fn update_channels(state_lock: &mut LockedState) -> Result<(), CmdError> {
     let channels = state_lock.get_channels()?;
-    let mut packet = serde_json::to_value(ListChannelsResponse { data: channels })?;
+    for (tx, _, uuid) in state_lock.peers.iter() {
+        if let Some(uuid) = uuid {
+            let user = state_lock.get_user_exists(*uuid)?;
+            let our_channels = get_viewable_channels(state_lock, &channels, &user)?;
+            let mut packet = serde_json::to_value(ListChannelsResponse { data: our_channels })?;
+            packet["status"] = (Status::Ok as i32).into();
+            tx.send(packet.clone())?;
+        }
+    }
+    Ok(())
+}
+
+fn update_groups(state_lock: &mut LockedState) -> Result<(), CmdError> {
+    let groups = state_lock.get_groups()?;
+    let mut packet = serde_json::to_value(ListGroupsResponse { data: groups })?;
     packet["status"] = (Status::Ok as i32).into();
     state_lock.send_to_all(packet)?;
     Ok(())
@@ -242,15 +346,28 @@ impl Request for CreateGroupRequest {
             return Ok(GenericResponse(Status::Forbidden));
         }
 
+        let groups = state_lock.get_groups()?;
+
+        // Cannot add a group (too far) past the end of existing groups
+        let next_position = groups.iter().map(|g| g.position + 1).max().unwrap_or(0);
+        if self.position > next_position {
+            return Ok(GenericResponse(Status::BadRequest));
+        }
+
         state_lock.insert_group(&Group {
             uuid: gen_uuid(),
             permissions: self.permissions,
             name: self.name,
             colour: self.colour,
-            position: self.position,
+            position: next_position,
         })?;
-        // TODO update positions
-        todo!();
+
+        moveto(next_position, self.position, groups, |g| {
+            state_lock.update_group(&g)
+        })?;
+
+        update_groups(state_lock)?;
+        Ok(GenericResponse(Status::Ok))
     }
 }
 impl Request for DeleteGroupRequest {
@@ -273,8 +390,16 @@ impl Request for DeleteGroupRequest {
         }
 
         state_lock.delete_group(self.uuid)?;
+        // shift down the groups
+        for g in state_lock.get_groups()? {
+            if g.position > group.position {
+                let new_pos = g.position - 1;
+                state_lock.update_group(&g.with_pos(new_pos))?;
+            }
+        }
 
-        todo!();
+        update_groups(state_lock)?;
+        Ok(GenericResponse(Status::Ok))
     }
 }
 impl Request for UpdateGroupRequest {
@@ -291,6 +416,15 @@ impl Request for UpdateGroupRequest {
         if self.g.position <= highest_role {
             return Ok(GenericResponse(Status::Forbidden));
         }
+
+        let Some(old) = state_lock.get_group(self.g.uuid)? else {
+            return Ok(GenericResponse(Status::NotFound));
+        };
+
+        let groups = state_lock.get_groups()?;
+        moveto(old.position, self.g.position, groups, |g| {
+            state_lock.update_group(&g)
+        })?;
         todo!();
     }
 }
@@ -303,24 +437,28 @@ impl Request for CreateChannelRequest {
         if server_perms(state_lock, peer)?.modify_channels != Perm::Allow {
             return Ok(GenericResponse(Status::Forbidden));
         }
+        // TODO consider forbidding altering perms for higher groups
+        // TODO consider forbidding altering perms if no modify_groups perm
 
-        let next_position = state_lock
-            .get_channels()?
-            .iter()
-            .map(|c| c.position as isize)
-            .max()
-            .unwrap_or(-1)
-            + 1;
+        let channels = state_lock.get_channels()?;
+
+        // Cannot add a channel (too far) past the end of existing channels
+        let next_position = channels.iter().map(|c| c.position + 1).max().unwrap_or(0);
+        if self.position > next_position {
+            return Ok(GenericResponse(Status::BadRequest));
+        }
+
         state_lock.insert_channel(&Channel {
             uuid: gen_uuid(),
             name: self.name,
             permissions: HashMap::new(),
-            position: next_position as usize,
+            position: next_position,
+        })?;
+
+        moveto(next_position, self.position, channels, |channel| {
+            state_lock.update_channel(&channel)
         })?;
         update_channels(state_lock)?;
-        // TODO update positions
-        // TODO forbid altering permissions for higher roles
-        todo!();
         Ok(GenericResponse(Status::Ok))
     }
 }
@@ -333,8 +471,19 @@ impl Request for DeleteChannelRequest {
             return Ok(GenericResponse(Status::Forbidden));
         }
 
+        let Some(channel) = state_lock.get_channel(&self.channel)? else {
+            return Ok(GenericResponse(Status::NotFound));
+        };
+
         state_lock.delete_channel(self.channel)?;
-        // TODO update positions
+        // shift down the channels
+        for c in state_lock.get_channels()? {
+            if c.position > channel.position {
+                let new_pos = c.position - 1;
+                state_lock.update_channel(&c.with_pos(new_pos))?;
+            }
+        }
+
         update_channels(state_lock)?;
         Ok(GenericResponse(Status::Ok))
     }
@@ -347,7 +496,8 @@ impl Request for UpdateChannelRequest {
         if server_perms(state_lock, peer)?.modify_channels != Perm::Allow {
             return Ok(GenericResponse(Status::Forbidden));
         }
-
+        // TODO consider forbidding altering perms for higher groups
+        // TODO consider forbidding altering perms if no modify_groups perm
         let channels = state_lock.get_channels()?;
         let Some(old_channel) = state_lock.get_channel(&self.channel.uuid)? else {
             return Ok(GenericResponse(Status::NotFound));
@@ -358,36 +508,16 @@ impl Request for UpdateChannelRequest {
             return Ok(GenericResponse(Status::BadRequest));
         }
 
-        // recalculate channel positions, given the position of this channel
-        // TODO maybe use a transaction...
-        if old_channel.position < self.channel.position {
-            for c in channels {
-                if c.position > old_channel.position && c.position <= self.channel.position {
-                    state_lock.update_channel(&Channel {
-                        uuid: c.uuid,
-                        name: c.name,
-                        position: c.position - 1,
-                        permissions: c.permissions,
-                    })?;
-                }
-            }
-        } else if old_channel.position > self.channel.position {
-            for c in channels {
-                if c.position >= self.channel.position && c.position < old_channel.position {
-                    state_lock.update_channel(&Channel {
-                        uuid: c.uuid,
-                        name: c.name,
-                        position: c.position + 1,
-                        permissions: c.permissions,
-                    })?;
-                }
-            }
-        }
+        moveto(
+            old_channel.position,
+            self.channel.position,
+            channels,
+            |channel| state_lock.update_channel(&channel),
+        )?;
+
         state_lock.update_channel(&self.channel)?;
 
         update_channels(state_lock)?;
-        // TODO forbid altering permissions for higher roles
-        todo!();
         Ok(GenericResponse(Status::Ok))
     }
 }
@@ -486,4 +616,70 @@ pub fn process_command(
     let d = a.elapsed();
     println!(" took {}µs to respond", d.as_micros());
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use crate::{
+        helper::{gen_uuid, Uuid},
+        models::Channel,
+    };
+
+    use super::moveto;
+
+    #[test]
+    fn reorder_channels() {
+        let mut ch_db: HashMap<Uuid, Channel> = HashMap::new();
+        for i in 0..10 {
+            let uuid = gen_uuid();
+            ch_db.insert(
+                uuid,
+                Channel {
+                    uuid,
+                    name: format!("{}", i),
+                    position: i,
+                    permissions: HashMap::new(),
+                },
+            );
+        }
+
+        let channels_vec: Vec<Channel> = ch_db.values().map(|c| c.clone()).collect();
+        moveto(3, 6, channels_vec.clone(), |thing: Channel| {
+            ch_db.insert(thing.uuid, thing);
+            Ok(())
+        })
+        .unwrap();
+        let channels_vec: Vec<Channel> = ch_db.values().map(|c| c.clone()).collect();
+        moveto(7, 2, channels_vec.clone(), |thing: Channel| {
+            ch_db.insert(thing.uuid, thing);
+            Ok(())
+        })
+        .unwrap();
+        let channels_vec: Vec<Channel> = ch_db.values().map(|c| c.clone()).collect();
+        moveto(5, 5, channels_vec.clone(), |thing: Channel| {
+            ch_db.insert(thing.uuid, thing);
+            Ok(())
+        })
+        .unwrap();
+        let mut new_channels: Vec<Channel> = ch_db.values().map(|c| c.clone()).collect();
+        new_channels.sort_by_key(|c| c.position);
+        println!(
+            "{}",
+            new_channels
+                .iter()
+                .map(|c| format!("{}: {}", c.position, c.name))
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
+        assert_eq!(
+            new_channels.iter().map(|c| c.position).collect::<Vec<_>>(),
+            vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+        );
+        assert_eq!(
+            new_channels.iter().map(|c| &c.name).collect::<Vec<_>>(),
+            vec!["0", "1", "7", "2", "4", "5", "6", "3", "8", "9",]
+        );
+    }
 }
