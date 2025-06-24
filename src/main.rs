@@ -24,7 +24,9 @@ use std::sync::Arc;
 use std::task::Context;
 use std::task::Poll;
 
+pub mod attachments;
 pub mod commands;
+pub mod files;
 pub mod helper;
 pub mod message;
 pub mod models;
@@ -40,9 +42,9 @@ use shared::Shared;
 const API_VERSION: [u8; 3] = [0, 2, 0]; // major, minor, patch
 
 //DEBUG
-// type SocketStream = TcpStream;
+type SocketStream = TcpStream;
 
-type SocketStream = TlsStream<TcpStream>;
+//type SocketStream = TlsStream<TcpStream>;
 
 #[derive(Deserialize)]
 pub struct Config {
@@ -121,7 +123,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     log::info!("Listening on {}", &addr);
 
     // TLS stuff, disable for testing
-    let mut f = File::open(&CONF.certificate_chain).expect("Unable to read certificate chain file");
+    /*    let mut f = File::open(&CONF.certificate_chain).expect("Unable to read certificate chain file");
     let mut chain: Vec<u8> = Vec::new();
     f.read_to_end(&mut chain)
         .expect("Unable to understand the certificate chain. Is it in the right format?");
@@ -136,21 +138,32 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let tls_acceptor = tokio_native_tls::TlsAcceptor::from(
         native_tls::TlsAcceptor::builder(cert).build().unwrap(),
     );
+    */
 
     loop {
+        //PLAIN TCP ACCEPT
         let (stream, addr) = listener.accept().await?;
-        log::info!("Got connection from {}", &addr);
-        let tls_acceptor = tls_acceptor.clone();
+        log::info!("Got connection from {}", addr);
 
+        // clone shared state for the task
         let state = Arc::clone(&state);
 
         tokio::spawn(async move {
-            let tls_stream = tls_acceptor.accept(stream).await.expect("Accept error");
+            /*
+              When TLS is re-enabled, comment out the next line and replace
+              `stream` with:
+                  let stream = tls_acceptor
+                      .accept(stream)
+                      .await
+                      .expect(\"TLS accept error\");
+            */
             let mut peer = Peer::new(addr);
-            if let Err(e) = process(Arc::clone(&state), tls_stream, &mut peer).await {
-                log::error!("An error occurred in the connection:\n{:?}", e);
+
+            // process the connection (raw TCP stream)
+            if let Err(e) = process(Arc::clone(&state), stream, &mut peer).await {
+                log::error!("An error occurred in the connection:n{:?}", e);
             }
-            log::info!("Lost connection from {}", &addr);
+            log::info!("Lost connection from {}", addr);
 
             let mut state = state.lock().await;
             if let Some(uuid) = peer.uuid {
@@ -167,7 +180,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             }
         });
     }
-}
+} // <--- this bracker took me 15 mins to find fml
 
 // hang on hang on I can explain
 // so basically i have to read the first character of the stream
