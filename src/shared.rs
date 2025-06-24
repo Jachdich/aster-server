@@ -21,7 +21,7 @@ type DbError = rusqlite::Error;
 pub const LATEST_VERSION: i32 = 3; //bumped this up to three to let the migration system know the db has a newer target schema
 
 // TODO add unique constraints where applicable
-//
+
 // completely changed this function
 // rewrote the entire SQL string so that it now creates files (stores every uploads metadata), creates attachments.
 // also added this bit: ALTER TABLE users ADD COLUMN avatar_file_id (nullable fk to files)
