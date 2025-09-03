@@ -1,14 +1,11 @@
-mod auth;
+pub mod auth;
 mod log_any;
 mod log_in;
 mod log_out;
 
-use futures::channel::mpsc::UnboundedSender;
-//use auth::*;
 use log_any::*;
 use log_in::*;
 use log_out::*;
-use rand::seq::SliceRandom;
 
 use crate::helper::{gen_uuid, JsonValue, LockedState, Uuid};
 use crate::message::Message;
@@ -56,8 +53,11 @@ pub struct DeleteGroupRequest {
 
 #[derive(Deserialize)]
 pub struct UpdateGroupRequest {
-    #[serde(flatten)]
-    pub g: Group,
+    pub uuid: i64,
+    pub permissions: Option<Permissions>,
+    pub name: Option<String>,
+    pub colour: Option<i32>,
+    pub position: Option<usize>,
 }
 
 #[derive(Deserialize)]
@@ -156,6 +156,7 @@ pub enum Response {
     #[serde(rename = "message_edited")]   MessageEditedResponse { message: Uuid, new_content: String },
     #[serde(rename = "message_deleted")]  MessageDeletedResponse { message: Uuid },
     #[serde(rename = "list_groups")]      ListGroupsResponse { data: Vec<Group> },
+    #[serde(rename = "create_channel")]   CreateChannelResponse { uuid: Uuid },
 
     #[serde(rename = "content")]
     ContentResponse {
@@ -261,7 +262,7 @@ fn get_viewable_channels(
     for channel in all_channels {
         if state_lock
             .resolve_channel_permissions(user, channel)?
-            .view_this_channel
+            .view_channel
             == Perm::Allow
         {
             our_channels.push(channel.clone());
@@ -349,6 +350,7 @@ impl Request for CreateGroupRequest {
         let groups = state_lock.get_groups()?;
 
         // Cannot add a group (too far) past the end of existing groups
+        // TODO could this just be a last() cos they are in the right order
         let next_position = groups.iter().map(|g| g.position + 1).max().unwrap_or(0);
         if self.position > next_position {
             return Ok(GenericResponse(Status::BadRequest));
@@ -411,20 +413,35 @@ impl Request for UpdateGroupRequest {
             return Ok(GenericResponse(Status::Forbidden));
         }
 
-        // forbid altering higher groups
-        let highest_role = state_lock.get_highest_group_pos_of(peer.uuid.unwrap())?;
-        if self.g.position <= highest_role {
-            return Ok(GenericResponse(Status::Forbidden));
-        }
-
-        let Some(old) = state_lock.get_group(self.g.uuid)? else {
+        let Some(old) = state_lock.get_group(self.uuid)? else {
             return Ok(GenericResponse(Status::NotFound));
         };
 
+        let position = self.position.unwrap_or(old.position);
+        let name = self.name.unwrap_or(old.name);
+        let permissions = self.permissions.unwrap_or(old.permissions);
+        let colour = self.colour.unwrap_or(old.colour);
+
+        let new_group = Group {
+            uuid: self.uuid,
+            position,
+            name,
+            permissions,
+            colour,
+        };
+
+        // forbid altering higher groups
+        let highest_role = state_lock.get_highest_group_pos_of(peer.uuid.unwrap())?;
+        if position <= highest_role || old.position <= highest_role {
+            return Ok(GenericResponse(Status::Forbidden));
+        }
+
         let groups = state_lock.get_groups()?;
-        moveto(old.position, self.g.position, groups, |g| {
+        moveto(old.position, position, groups, |g| {
             state_lock.update_group(&g)
         })?;
+
+        state_lock.update_group(&new_group)?;
         todo!();
     }
 }
@@ -444,22 +461,24 @@ impl Request for CreateChannelRequest {
 
         // Cannot add a channel (too far) past the end of existing channels
         let next_position = channels.iter().map(|c| c.position + 1).max().unwrap_or(0);
-        if self.position > next_position {
+        let position = self.position.unwrap_or(next_position);
+        if position > next_position {
             return Ok(GenericResponse(Status::BadRequest));
         }
 
+        let uuid = gen_uuid();
         state_lock.insert_channel(&Channel {
-            uuid: gen_uuid(),
+            uuid,
             name: self.name,
             permissions: HashMap::new(),
             position: next_position,
         })?;
 
-        moveto(next_position, self.position, channels, |channel| {
+        moveto(next_position, position, channels, |channel| {
             state_lock.update_channel(&channel)
         })?;
         update_channels(state_lock)?;
-        Ok(GenericResponse(Status::Ok))
+        Ok(CreateChannelResponse { uuid })
     }
 }
 impl Request for DeleteChannelRequest {
@@ -499,23 +518,30 @@ impl Request for UpdateChannelRequest {
         // TODO consider forbidding altering perms for higher groups
         // TODO consider forbidding altering perms if no modify_groups perm
         let channels = state_lock.get_channels()?;
-        let Some(old_channel) = state_lock.get_channel(&self.channel.uuid)? else {
+        let Some(old_channel) = state_lock.get_channel(&self.uuid)? else {
             return Ok(GenericResponse(Status::NotFound));
         };
 
+        let position = self.position.unwrap_or(old_channel.position);
+        let name = self.name.unwrap_or(old_channel.name);
+        let permissions = self.permissions.unwrap_or(old_channel.permissions);
+        let new_channel = Channel {
+            uuid: self.uuid,
+            name,
+            permissions,
+            position,
+        };
+
         // unwrap ok, because we know there must be at least one channel as it exists
-        if self.channel.position > channels.last().unwrap().position {
+        if position > channels.last().unwrap().position {
             return Ok(GenericResponse(Status::BadRequest));
         }
 
-        moveto(
-            old_channel.position,
-            self.channel.position,
-            channels,
-            |channel| state_lock.update_channel(&channel),
-        )?;
+        moveto(old_channel.position, position, channels, |channel| {
+            state_lock.update_channel(&channel)
+        })?;
 
-        state_lock.update_channel(&self.channel)?;
+        state_lock.update_channel(&new_channel)?;
 
         update_channels(state_lock)?;
         Ok(GenericResponse(Status::Ok))

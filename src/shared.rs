@@ -224,7 +224,7 @@ const MIGRATIONS: &[Migration] = &[
                 read_messages: Perm::Allow,
                 manage_messages: Perm::Deny,
                 join_voice: Perm::Allow,
-                view_this_channel: Perm::Allow,
+                view_channel: Perm::Allow,
             };
             let perm_bytes: Box<[u8]> = default_base_perms.into();
             sqlitedb.execute("INSERT INTO server_config VALUES (?1, ?2, ?3)", params![&CONF.name, pfp_bytes, perm_bytes.into_vec()])?;
@@ -313,7 +313,7 @@ impl Shared {
             read_messages: Perm::Allow,
             manage_messages: Perm::Deny,
             join_voice: Perm::Allow,
-            view_this_channel: Perm::Allow,
+            view_channel: Perm::Allow,
         };
         let perm_bytes: Box<[u8]> = default_base_perms.into();
         self.conn
@@ -500,7 +500,7 @@ impl Shared {
 
     pub fn get_group_uuids_of(&self, user_uuid: Uuid) -> Result<Vec<Uuid>, DbError> {
         self.conn
-            .prepare("SELECT * FROM user_groups WHERE user_uuid = ?1")?
+            .prepare("SELECT group_uuid FROM user_groups WHERE user_uuid = ?1")?
             .query_map([user_uuid], |row| row.get(0))?
             .collect()
     }
@@ -971,7 +971,7 @@ mod tests {
             read_messages: Allow,
             manage_messages: Deny,
             join_voice: Deny,
-            view_this_channel: Deny,
+            view_channel: Deny,
         })
         .unwrap();
 
@@ -1074,7 +1074,7 @@ mod tests {
                 read_messages: Allow,
                 manage_messages: Deny,
                 join_voice: Allow,
-                view_this_channel: Deny,
+                view_channel: Deny,
             }
         );
         assert_eq!(
@@ -1089,7 +1089,7 @@ mod tests {
                 read_messages: Allow,
                 manage_messages: Deny,
                 join_voice: Deny,
-                view_this_channel: Deny,
+                view_channel: Deny,
             }
         );
         assert_eq!(
@@ -1104,7 +1104,7 @@ mod tests {
                 read_messages: Allow,
                 manage_messages: Allow,
                 join_voice: Allow,
-                view_this_channel: Deny,
+                view_channel: Deny,
             }
         );
         assert_eq!(
@@ -1119,7 +1119,7 @@ mod tests {
                 read_messages: Allow,
                 manage_messages: Deny,
                 join_voice: Allow,
-                view_this_channel: Deny,
+                view_channel: Deny,
             }
         );
         assert_eq!(
@@ -1134,7 +1134,7 @@ mod tests {
                 read_messages: Allow,
                 manage_messages: Deny,
                 join_voice: Deny,
-                view_this_channel: Deny,
+                view_channel: Deny,
             }
         );
         assert_eq!(
@@ -1149,7 +1149,7 @@ mod tests {
                 read_messages: Allow,
                 manage_messages: Deny,
                 join_voice: Deny,
-                view_this_channel: Deny,
+                view_channel: Deny,
             }
         );
     }
@@ -1369,7 +1369,7 @@ mod tests {
                 read_messages: Perm::Allow,
                 manage_messages: Perm::Allow,
                 join_voice: Perm::Allow,
-                view_this_channel: Perm::Allow,
+                view_channel: Perm::Allow,
             },
         );
 

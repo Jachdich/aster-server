@@ -80,7 +80,7 @@ pub struct PasswordChangeRequest {
 #[derive(Deserialize)]
 pub struct CreateChannelRequest {
     pub name: String,
-    pub position: usize,
+    pub position: Option<usize>,
     pub permissions: HashMap<PermableEntity, Permissions>,
 }
 
@@ -92,8 +92,10 @@ pub struct DeleteChannelRequest {
 /// Position is new position channel should take. Updates all other channel positions to allow this.
 #[derive(Deserialize)]
 pub struct UpdateChannelRequest {
-    #[serde(flatten)]
-    pub channel: Channel,
+    pub uuid: Uuid,
+    pub name: Option<String>,
+    pub position: Option<usize>,
+    pub permissions: Option<HashMap<PermableEntity, Permissions>>,
 }
 
 #[derive(Deserialize)]
