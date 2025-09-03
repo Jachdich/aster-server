@@ -110,6 +110,13 @@ impl Request for LoginRequest {
         }
 
         peer.uuid = Some(user.uuid);
+        // stoopid: the sequel
+        // (actually this just makes sure that the shared's peers list has the right uuid)
+        for p in &mut state_lock.peers {
+            if p.1 == peer.addr {
+                p.2 = Some(user.uuid);
+            }
+        }
 
         state_lock.inc_online(user.uuid);
         send_metadata(state_lock, peer);

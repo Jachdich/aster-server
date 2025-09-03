@@ -4,7 +4,10 @@ extern crate lazy_static;
 extern crate tokio;
 
 use base64::{engine::general_purpose, Engine as _};
+use helper::gen_uuid;
 use lazy_static::lazy_static;
+use models::{Group, User};
+use permissions::{Perm, Permissions};
 use serde::Deserialize;
 use serde_json::json;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, ReadBuf};
@@ -112,6 +115,43 @@ async fn main() -> Result<(), Box<dyn Error>> {
     };
     let shared = Shared::new(sqlitedb);
     shared.init_db();
+
+    // DEBUG lol
+    if args.len() >= 5 {
+        if args[2] == "--admin-user" {
+            let username = &args[3];
+            let password = &args[4];
+            let group = Group {
+                uuid: gen_uuid(),
+                permissions: Permissions {
+                    modify_channels: Perm::Allow,
+                    modify_icon_name: Perm::Allow,
+                    modify_groups: Perm::Allow,
+                    modify_user_groups: Perm::Allow,
+                    ban_users: Perm::Allow,
+                    send_messages: Perm::Allow,
+                    read_messages: Perm::Allow,
+                    manage_messages: Perm::Allow,
+                    join_voice: Perm::Allow,
+                    view_channel: Perm::Allow,
+                },
+                name: "admin".to_string(),
+                colour: 0,
+                position: 0,
+            };
+            let user = User {
+                name: username.to_owned(),
+                pfp: CONF.default_pfp.to_owned(),
+                uuid: gen_uuid(),
+                password: crate::commands::auth::make_hash(password)?,
+                groups: vec![group.uuid],
+            };
+
+            shared.insert_group(&group)?;
+            shared.insert_user(&user)?;
+        }
+    }
+    // debug end
     let state = Arc::new(Mutex::new(shared));
 
     let addr = format!("{}:{}", &CONF.addr, CONF.port);
