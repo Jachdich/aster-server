@@ -25,7 +25,7 @@ pub struct Shared {
 }
 
 pub type DbError = rusqlite::Error;
-const LATEST_VERSION: i32 = 4;
+const LATEST_VERSION: i32 = 5;
 
 // TODO add unique constraints where applicable
 fn latest_schema() -> String {
@@ -106,17 +106,29 @@ CREATE TABLE channel_group_permissions (
     FOREIGN KEY (user_uuid) REFERENCES users(uuid),
     FOREIGN KEY (group_uuid) REFERENCES groups(uuid)
 );
+
+CREATE TABLE last_read_messages (
+    user_uuid BigInt NOT NULL,
+    channel_uuid BigInt NOT NULL,
+    message_uuid BigInt NOT NULL,
+    FOREIGN KEY (user_uuid) REFERENCES users(uuid),
+    FOREIGN KEY (channel_uuid) REFERENCES channels(uuid),
+    FOREIGN KEY (message_uuid) REFERENCES messages(uuid)
+);
+
 COMMIT;"#,
         LATEST_VERSION,
         gen_uuid()
     )
 }
 
+type MigrationFunction = fn(&Connection) -> Result<(), DbError>;
+
 struct Migration {
     from: i32,
     to: i32,
     sql: &'static str,
-    f: Option<fn(&Connection) -> Result<(), DbError>>,
+    f: Option<MigrationFunction>,
 }
 
 const MIGRATIONS: &[Migration] = &[
@@ -230,6 +242,23 @@ const MIGRATIONS: &[Migration] = &[
             sqlitedb.execute("INSERT INTO server_config VALUES (?1, ?2, ?3)", params![&CONF.name, pfp_bytes, perm_bytes.into_vec()])?;
             Ok(())
         }),
+    },
+
+    Migration {
+        from: 4, to: 5,
+        sql: r#"
+            begin;
+            CREATE TABLE last_read_messages (
+                user_uuid BigInt NOT NULL,
+                channel_uuid BigInt NOT NULL,
+                message_uuid BigInt NOT NULL,
+                FOREIGN KEY (user_uuid) REFERENCES users(uuid),
+                FOREIGN KEY (channel_uuid) REFERENCES channels(uuid),
+                FOREIGN KEY (message_uuid) REFERENCES messages(uuid)
+            );
+            commit;
+        "#,
+        f: None,
     }
 ];
 
@@ -372,7 +401,7 @@ impl Shared {
                 .iter()
                 .filter(|m| m.from == current_version)
                 .collect();
-            if applicable_migrations.len() == 0 {
+            if applicable_migrations.is_empty() {
                 panic!(
                     "Unable to find a migration from db version {} (latest version is {})",
                     current_version, latest_version
@@ -381,21 +410,25 @@ impl Shared {
 
             let m = applicable_migrations[0];
             log::info!("Applying migration from db version {} to {}", m.from, m.to);
-            self.conn.execute_batch(m.sql).expect(&format!(
-                "Failed to apply migration from db version {} to {}",
-                m.from, m.to
-            ));
+            self.conn.execute_batch(m.sql).unwrap_or_else(|_| {
+                panic!(
+                    "Failed to apply migration from db version {} to {}",
+                    m.from, m.to
+                )
+            });
 
             if let Some(f) = m.f {
-                f(&self.conn).expect(&format!(
-                    "Failed to run post-migration hook from db version {} to {}",
-                    m.from, m.to
-                ));
+                f(&self.conn).unwrap_or_else(|_| {
+                    panic!(
+                        "Failed to run post-migration hook from db version {} to {}",
+                        m.from, m.to
+                    )
+                });
             }
 
             current_version = m.to;
             self.conn
-                .execute_batch(&format!("UPDATE version SET version={};", current_version))
+                .execute_batch(&format!("UPDATE version SET version={current_version};"))
                 .expect("Unable to update vesion in table");
         }
     }
@@ -416,6 +449,29 @@ impl Shared {
             None => 0,
         };
         self.online.insert(user, orig_count + 1);
+    }
+
+    // TODO test
+    /// Get the message IDs of the last messages read by a given user
+    /// Returns `Err(_)` if the database operation failed.
+    /// Returns an empty map if the user's UUID does not exist, or there is no
+    /// read message information for that user.
+    pub fn get_last_read_messages(&self, user: Uuid) -> Result<HashMap<Uuid, Uuid>, DbError> {
+        let mut map = HashMap::<Uuid, Uuid>::new();
+
+        for (channel, message) in self
+            .conn
+            .prepare(
+                "SELECT channel_uuid, message_uuid FROM last_read_messages WHERE user_uuid = ?1",
+            )?
+            .query_map([user], |row| {
+                Ok((row.get::<usize, Uuid>(0)?, row.get::<usize, Uuid>(1)?))
+            })?
+            .collect::<Result<Vec<_>, _>>()?
+        {
+            map.insert(channel, message);
+        }
+        Ok(map)
     }
 
     pub fn get_user_by_name(&self, name: &str) -> Result<Option<User>, DbError> {
@@ -636,10 +692,9 @@ impl Shared {
     }
 
     pub fn message_exists(&self, uuid: &Uuid) -> Result<bool, DbError> {
-        Ok(self
-            .conn
+        self.conn
             .prepare("select exists(select 1 from messages where uuid=?1)")?
-            .query_row([uuid], |row| Ok(row.get::<usize, i32>(0)? == 1))?)
+            .query_row([uuid], |row| Ok(row.get::<usize, i32>(0)? == 1))
     }
 
     pub fn get_user(&self, user: i64) -> Result<Option<User>, DbError> {
@@ -737,7 +792,7 @@ impl Shared {
         self.conn
             .prepare("insert into channels values (?1, ?2, ?3)")?
             .execute(params![channel.uuid, channel.name, channel.position])?;
-        self.insert_channel_perms(&channel)
+        self.insert_channel_perms(channel)
     }
 
     pub fn insert_user_groups(&self, user: &User) -> Result<(), DbError> {
@@ -754,7 +809,7 @@ impl Shared {
         self.conn
             .prepare("insert into users values (?1, ?2, ?3, ?4)")?
             .execute(params![user.uuid, user.name, user.pfp, user.password])?;
-        self.insert_user_groups(&user)
+        self.insert_user_groups(user)
     }
 
     pub fn insert_sync_data(&self, data: &SyncData) -> Result<usize, DbError> {
@@ -787,7 +842,7 @@ impl Shared {
         // TODO maybe not the most efficient
         self.conn
             .execute("delete from user_groups where user_uuid = ?1", [user.uuid])?;
-        self.insert_user_groups(&user)
+        self.insert_user_groups(user)
     }
 
     pub fn update_sync_data(&self, data: SyncData) -> Result<usize, DbError> {
@@ -935,7 +990,7 @@ impl Shared {
         let perms = to_apply
             .iter()
             .rev()
-            .fold(base, |acc, (perm, _)| acc.apply_over(&perm));
+            .fold(base, |acc, (perm, _)| acc.apply_over(perm));
         Ok(perms)
     }
 }

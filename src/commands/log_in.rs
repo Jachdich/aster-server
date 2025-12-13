@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use crate::helper::{gen_uuid, LockedState};
 use crate::message::Message;
-use crate::models::{Channel, SyncData, SyncServer};
+use crate::models::{SyncData, SyncServer};
 use crate::peer::Peer;
 use crate::permissions::{Perm, PermableEntity, Permissions};
 use crate::{

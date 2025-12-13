@@ -66,6 +66,9 @@ pub struct UpdateUserGroupsRequest {
     pub groups: Vec<Uuid>,
 }
 
+#[derive(Deserialize)]
+pub struct GetLastReadsRequest;
+
 /// # API Docs
 /// For documentation of each packet, its fields, and when it may be sent; see its respective struct's documentation.
 /// ## Overview
@@ -91,13 +94,12 @@ pub struct UpdateUserGroupsRequest {
 /// {"command": "login", "status": 403}
 /// ```
 /// To indicate the password is incorrect.
-
+///
 /// ## Events
 /// The server may send a subset of the possible reply packets without a corresponding request. These can be
 /// thought of as events, where the server is notifying the client of a change that said client did not initiate
 /// itself. For example, if a new user logs in, all other clients will automatically be sent an "online" packet
 /// with the new list of online clients.
-
 #[enum_dispatch]
 #[derive(Deserialize)]
 #[serde(tag = "command")]
@@ -134,6 +136,8 @@ pub enum Requests {
     #[serde(rename = "update_group")]     UpdateGroupRequest,
     #[serde(rename = "update_user_groups")] UpdateUserGroupsRequest,
     #[serde(rename = "list_groups")]      ListGroupsRequest,
+
+    #[serde(rename = "get_last_reads")]   GetLastReadsRequest,
 }
 
 #[derive(Serialize)]
@@ -157,6 +161,8 @@ pub enum Response {
     #[serde(rename = "message_deleted")]  MessageDeletedResponse { message: Uuid },
     #[serde(rename = "list_groups")]      ListGroupsResponse { data: Vec<Group> },
     #[serde(rename = "create_channel")]   CreateChannelResponse { uuid: Uuid },
+
+    #[serde(rename = "get_last_reads")]   GetLastReadsResponse { last_reads: HashMap<Uuid, Uuid> },
 
     #[serde(rename = "content")]
     ContentResponse {
@@ -304,6 +310,18 @@ pub fn channel_perms(
 ) -> Result<Permissions, DbError> {
     let user = state_lock.get_user(uuid.unwrap())?.unwrap();
     state_lock.resolve_channel_permissions(&user, channel)
+}
+
+impl Request for GetLastReadsRequest {
+    fn execute(self, state_lock: &mut LockedState, peer: &mut Peer) -> Result<Response, CmdError> {
+        let Some(user_uuid) = peer.uuid else {
+            return Ok(GenericResponse(Status::Unauthenticated));
+        };
+
+        let last_reads = state_lock.get_last_read_messages(user_uuid)?;
+
+        Ok(GetLastReadsResponse { last_reads })
+    }
 }
 
 impl Request for UpdateUserGroupsRequest {
@@ -624,7 +642,7 @@ pub fn process_command(
             } else {
                 "unknown".to_owned()
             };
-            print!("Request {}", command);
+            print!("Request {command}");
 
             match serde_json::from_value::<Requests>(raw_request) {
                 Ok(request) => execute_request(request, state, peer, &command),

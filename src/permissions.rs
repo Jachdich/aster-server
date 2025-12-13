@@ -74,7 +74,7 @@ fn perms_to_byte(p: [Perm; 4]) -> u8 {
 
 impl From<&[u8]> for Permissions {
     fn from(value: &[u8]) -> Self {
-        let perms: Vec<Perm> = value.iter().map(|x| byte_to_perms(*x)).flatten().collect();
+        let perms: Vec<Perm> = value.iter().flat_map(|x| byte_to_perms(*x)).collect();
         let get_perm = |idx| {
             if idx < perms.len() {
                 perms[idx]
@@ -161,8 +161,7 @@ impl<'de> Visitor<'de> for ArrayVisitor<Vec<u8>> {
 
     fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
         formatter.write_str(&format!(
-            "an array of length at most {} (or is it really??? perms)",
-            PERM_N_BYTES
+            "an array of length at most {PERM_N_BYTES} (or is it really??? perms)",
         ))
     }
 

@@ -103,10 +103,8 @@ impl Request for LoginRequest {
         if user.password.is_empty() {
             user.password = make_hash(&self.passwd)?;
             state_lock.update_user(&user)?;
-        } else {
-            if !check_password(&self.passwd, &user.password)? {
-                return Ok(GenericResponse(Status::Forbidden));
-            }
+        } else if !check_password(&self.passwd, &user.password)? {
+            return Ok(GenericResponse(Status::Forbidden));
         }
 
         peer.uuid = Some(user.uuid);
