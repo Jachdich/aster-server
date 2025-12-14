@@ -69,6 +69,11 @@ pub struct UpdateUserGroupsRequest {
 #[derive(Deserialize)]
 pub struct GetLastReadsRequest;
 
+#[derive(Deserialize)]
+pub struct MarkUnreadRequest {
+    id: Uuid,
+}
+
 /// # API Docs
 /// For documentation of each packet, its fields, and when it may be sent; see its respective struct's documentation.
 /// ## Overview
@@ -138,6 +143,7 @@ pub enum Requests {
     #[serde(rename = "list_groups")]      ListGroupsRequest,
 
     #[serde(rename = "get_last_reads")]   GetLastReadsRequest,
+    #[serde(rename = "mark_unread")]      MarkUnreadRequest,
 }
 
 #[derive(Serialize)]
@@ -321,6 +327,26 @@ impl Request for GetLastReadsRequest {
         let last_reads = state_lock.get_last_read_messages(user_uuid)?;
 
         Ok(GetLastReadsResponse { last_reads })
+    }
+}
+
+impl Request for MarkUnreadRequest {
+    fn execute(self, state_lock: &mut LockedState, peer: &mut Peer) -> Result<Response, CmdError> {
+        let Some(user_uuid) = peer.uuid else {
+            return Ok(GenericResponse(Status::Unauthenticated));
+        };
+
+        let Some(message) = state_lock.get_message(self.id)? else {
+            return Ok(GenericResponse(Status::NotFound));
+        };
+
+        state_lock.update_last_read_for_user_in_channel(
+            user_uuid,
+            message.channel_uuid,
+            message.uuid,
+        )?;
+
+        Ok(GenericResponse(Status::Ok))
     }
 }
 

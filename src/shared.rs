@@ -451,7 +451,7 @@ impl Shared {
         self.online.insert(user, orig_count + 1);
     }
 
-    // TODO test
+    // TEST
     /// Get the message IDs of the last messages read by a given user
     /// Returns `Err(_)` if the database operation failed.
     /// Returns an empty map if the user's UUID does not exist, or there is no
@@ -472,6 +472,20 @@ impl Shared {
             map.insert(channel, message);
         }
         Ok(map)
+    }
+
+    // TEST
+    /// Update the database with the last read message in a (possibly new) channel
+    /// Returns `Err(_)` if the database operation failed.
+    pub fn update_last_read_for_user_in_channel(
+        &self,
+        user: Uuid,
+        channel: Uuid,
+        message: Uuid,
+    ) -> Result<usize, DbError> {
+        self.conn
+            .prepare("INSERT INTO last_read_messages VALUES (?1, ?2, ?3)")?
+            .execute([user, channel, message])
     }
 
     pub fn get_user_by_name(&self, name: &str) -> Result<Option<User>, DbError> {
