@@ -28,3 +28,5 @@ anyhow = "1.0.71"
 rusqlite = "0.32.1"
 futures = "0.3.31"
 
+[features]
+notls = []

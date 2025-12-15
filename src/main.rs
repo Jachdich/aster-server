@@ -4,12 +4,12 @@ extern crate lazy_static;
 extern crate tokio;
 
 use base64::{engine::general_purpose, Engine as _};
+use commands::Response;
 use helper::gen_uuid;
 use lazy_static::lazy_static;
 use models::{Group, User};
 use permissions::{Perm, Permissions};
 use serde::Deserialize;
-use serde_json::json;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, ReadBuf};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Mutex;
@@ -42,8 +42,11 @@ use shared::Shared;
 const API_VERSION: [u8; 3] = [1, 0, 0]; // major, minor, patch
 
 //DEBUG
-// type SocketStream = TcpStream;
 
+#[cfg(feature = "notls")]
+type SocketStream = TcpStream;
+
+#[cfg(not(feature = "notls"))]
 type SocketStream = TlsStream<TcpStream>;
 
 #[derive(Deserialize)]
@@ -159,7 +162,25 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let listener = TcpListener::bind(&addr).await?;
     log::info!("Listening on {}", &addr);
 
-    // TLS stuff, disable for testing
+    mainloop(listener, state).await
+}
+
+#[cfg(feature = "notls")]
+async fn mainloop(listener: TcpListener, state: Arc<Mutex<Shared>>) -> Result<(), Box<dyn Error>> {
+    loop {
+        let (stream, addr) = listener.accept().await?;
+        log::info!("Got connection from {}", &addr);
+
+        let state = Arc::clone(&state);
+
+        tokio::spawn(async move {
+            start_worker(stream, state, addr).await;
+        });
+    }
+}
+
+#[cfg(not(feature = "notls"))]
+async fn mainloop(listener: TcpListener, state: Arc<Mutex<Shared>>) -> Result<(), Box<dyn Error>> {
     let mut f = File::open(&CONF.certificate_chain).expect("Unable to read certificate chain file");
     let mut chain: Vec<u8> = Vec::new();
     f.read_to_end(&mut chain)
@@ -185,26 +206,30 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
         tokio::spawn(async move {
             let tls_stream = tls_acceptor.accept(stream).await.expect("Accept error");
-            let mut peer = Peer::new(addr);
-            if let Err(e) = process(Arc::clone(&state), tls_stream, &mut peer).await {
-                log::error!("An error occurred in the connection:\n{:?}", e);
-            }
-            log::info!("Lost connection from {}", &addr);
-
-            let mut state = state.lock().await;
-            if let Some(uuid) = peer.uuid {
-                let count = *state.online.get(&uuid).unwrap_or(&0);
-                if count > 0 {
-                    state.online.insert(uuid, count - 1);
-                }
-                if count == 1 {
-                    send_online(&state);
-                }
-            }
-            if let Some(index) = state.peers.iter().position(|x| x.1 == peer.addr) {
-                state.peers.remove(index);
-            }
+            start_worker(tls_stream, state, addr).await;
         });
+    }
+}
+
+async fn start_worker(stream: SocketStream, state: Arc<Mutex<Shared>>, addr: std::net::SocketAddr) {
+    let mut peer = Peer::new(addr);
+    if let Err(e) = process(Arc::clone(&state), stream, &mut peer).await {
+        log::error!("An error occurred in the connection:\n{:?}", e);
+    }
+    log::info!("Lost connection from {}", &addr);
+
+    let mut state = state.lock().await;
+    if let Some(uuid) = peer.uuid {
+        let count = *state.online.get(&uuid).unwrap_or(&0);
+        if count > 0 {
+            state.online.insert(uuid, count - 1);
+        }
+        if count == 1 {
+            send_online(&state);
+        }
+    }
+    if let Some(index) = state.peers.iter().position(|x| x.1 == peer.addr) {
+        state.peers.remove(index);
     }
 }
 
@@ -272,8 +297,11 @@ async fn process(
         let mut state = state.lock().await;
         state.peers.push((peer.tx.clone(), peer.addr, peer.uuid));
     }
-    peer.tx
-        .send(json!({"command": "API_version", "version": API_VERSION, "status": 200}))?;
+    let mut json = serde_json::to_value(Response::APIVersionResponse {
+        version: API_VERSION,
+    })?;
+    json["status"] = 200.into();
+    peer.tx.send(json)?;
     //TODO handshake protocol
 
     //identification of whether a raw socket (json protocol) or websocket has connected
