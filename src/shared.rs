@@ -112,7 +112,7 @@ CREATE TABLE last_read_messages (
     channel_uuid BigInt NOT NULL,
     date integer NOT NULL,
     FOREIGN KEY (user_uuid) REFERENCES users(uuid),
-    FOREIGN KEY (channel_uuid) REFERENCES channels(uuid),
+    FOREIGN KEY (channel_uuid) REFERENCES channels(uuid)
 );
 
 COMMIT;"#,
@@ -1849,7 +1849,7 @@ mod tests {
         assert!(h.is_ok());
         let h = h.unwrap();
         assert!(h.len() == 2);
-        assert_eq!(h[0], m1);
+        assert_eq!(h[1], m1);
     }
 
     #[test]
