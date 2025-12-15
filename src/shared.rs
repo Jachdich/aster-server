@@ -110,10 +110,9 @@ CREATE TABLE channel_group_permissions (
 CREATE TABLE last_read_messages (
     user_uuid BigInt NOT NULL,
     channel_uuid BigInt NOT NULL,
-    message_uuid BigInt NOT NULL,
+    date integer NOT NULL,
     FOREIGN KEY (user_uuid) REFERENCES users(uuid),
     FOREIGN KEY (channel_uuid) REFERENCES channels(uuid),
-    FOREIGN KEY (message_uuid) REFERENCES messages(uuid)
 );
 
 COMMIT;"#,
@@ -206,12 +205,22 @@ const MIGRATIONS: &[Migration] = &[
         from: 3, to: 4,
         sql: r#"
             begin;
+            PRAGMA foreign_keys=off;
             CREATE TABLE server_config (
                 name text NOT NULL,
                 icon blob NOT NULL,
                 base_perms blob NOT NULL
             );
-            ALTER TABLE users DROP COLUMN group_uuid;
+            ALTER TABLE users RENAME TO users_;
+            CREATE TABLE users (
+                uuid BigInt PRIMARY KEY NOT NULL,
+                name text NOT NULL,
+                pfp text NOT NULL,
+                password text NOT NULL
+            );
+
+            INSERT INTO users SELECT uuid, name, pfp, password FROM users_;
+            DROP TABLE users_;
             DROP TABLE groups;
             CREATE TABLE groups (
                 uuid BigInt PRIMARY KEY NOT NULL,
@@ -221,6 +230,7 @@ const MIGRATIONS: &[Migration] = &[
                 position Integer NOT NULL
             );
             commit;
+            PRAGMA foreign_keys=on;
         "#,
 
         f: Some(|sqlitedb: &Connection| {
@@ -251,10 +261,9 @@ const MIGRATIONS: &[Migration] = &[
             CREATE TABLE last_read_messages (
                 user_uuid BigInt NOT NULL,
                 channel_uuid BigInt NOT NULL,
-                message_uuid BigInt NOT NULL,
+                date integer NOT NULL,
                 FOREIGN KEY (user_uuid) REFERENCES users(uuid),
-                FOREIGN KEY (channel_uuid) REFERENCES channels(uuid),
-                FOREIGN KEY (message_uuid) REFERENCES messages(uuid)
+                FOREIGN KEY (channel_uuid) REFERENCES channels(uuid)
             );
             commit;
         "#,
@@ -410,18 +419,18 @@ impl Shared {
 
             let m = applicable_migrations[0];
             log::info!("Applying migration from db version {} to {}", m.from, m.to);
-            self.conn.execute_batch(m.sql).unwrap_or_else(|_| {
+            self.conn.execute_batch(m.sql).unwrap_or_else(|e| {
                 panic!(
-                    "Failed to apply migration from db version {} to {}",
-                    m.from, m.to
+                    "Failed to apply migration from db version {} to {}: {:?}",
+                    m.from, m.to, e
                 )
             });
 
             if let Some(f) = m.f {
-                f(&self.conn).unwrap_or_else(|_| {
+                f(&self.conn).unwrap_or_else(|e| {
                     panic!(
-                        "Failed to run post-migration hook from db version {} to {}",
-                        m.from, m.to
+                        "Failed to run post-migration hook from db version {} to {}: {:?}",
+                        m.from, m.to, e
                     )
                 });
             }
@@ -456,16 +465,14 @@ impl Shared {
     /// Returns `Err(_)` if the database operation failed.
     /// Returns an empty map if the user's UUID does not exist, or there is no
     /// read message information for that user.
-    pub fn get_last_read_messages(&self, user: Uuid) -> Result<HashMap<Uuid, Uuid>, DbError> {
+    pub fn get_last_read_messages(&self, user: Uuid) -> Result<HashMap<Uuid, i64>, DbError> {
         let mut map = HashMap::<Uuid, Uuid>::new();
 
         for (channel, message) in self
             .conn
-            .prepare(
-                "SELECT channel_uuid, message_uuid FROM last_read_messages WHERE user_uuid = ?1",
-            )?
+            .prepare("SELECT channel_uuid, date FROM last_read_messages WHERE user_uuid = ?1")?
             .query_map([user], |row| {
-                Ok((row.get::<usize, Uuid>(0)?, row.get::<usize, Uuid>(1)?))
+                Ok((row.get::<usize, Uuid>(0)?, row.get::<usize, i64>(1)?))
             })?
             .collect::<Result<Vec<_>, _>>()?
         {
@@ -483,9 +490,37 @@ impl Shared {
         channel: Uuid,
         message: Uuid,
     ) -> Result<usize, DbError> {
+        let date: i64 = self
+            .conn
+            .prepare("select date from messages where uuid=?1")?
+            .query_row([message], |row| row.get(0))?;
         self.conn
             .prepare("INSERT INTO last_read_messages VALUES (?1, ?2, ?3)")?
-            .execute([user, channel, message])
+            .execute([user, channel, date])
+    }
+
+    // TEST
+    /// Get the number of unread messages in a specific channel for a specific user.
+    /// If any of the following are true, return zero unread messages
+    ///   (1) The user does not exist
+    ///   (2) The channel does not exist
+    ///   (3) The user has no last read information for this channel (e.g. they have never read any messages)
+    /// Returns `Err(_)` if the database operation failed.
+    pub fn get_num_unread_messages(&self, user: Uuid, channel: Uuid) -> Result<u32, DbError> {
+        let Some(last_read_date) = self
+            .conn
+            .prepare(
+                "SELECT date FROM last_read_messages WHERE user_uid = ?1 AND channel_uuid = ?2",
+            )?
+            .query_row([user, channel], |row| row.get(0))
+            .optional()?
+        else {
+            return Ok(0);
+        };
+
+        self.conn
+            .prepare("SELECT COUNT(1) FROM messages WHERE channel_uuid = ?1 AND date > ?2")?
+            .query_row([channel, last_read_date], |row| row.get(0))
     }
 
     pub fn get_user_by_name(&self, name: &str) -> Result<Option<User>, DbError> {
@@ -940,7 +975,7 @@ impl Shared {
         } else {
             i32::MAX
         };
-        self.conn.prepare("select * from messages where channel_uuid = ?1 and rowid < ?2 order by rowid limit ?3")?
+        self.conn.prepare("select * from messages where channel_uuid = ?1 and rowid < ?2 order by rowid desc limit ?3")?
             .query_map(params![channel, init_rowid, num], |row|
                 Ok(Message {
                     uuid: row.get(0)?,

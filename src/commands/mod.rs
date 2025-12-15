@@ -71,7 +71,12 @@ pub struct GetLastReadsRequest;
 
 #[derive(Deserialize)]
 pub struct MarkUnreadRequest {
-    id: Uuid,
+    uuid: Uuid,
+}
+
+#[derive(Deserialize)]
+pub struct GetNumUnreadRequest {
+    channel: Uuid,
 }
 
 /// # API Docs
@@ -144,12 +149,14 @@ pub enum Requests {
 
     #[serde(rename = "get_last_reads")]   GetLastReadsRequest,
     #[serde(rename = "mark_unread")]      MarkUnreadRequest,
+    #[serde(rename = "get_num_unread")]   GetNumUnreadRequest,
 }
 
 #[derive(Serialize)]
 #[serde(tag = "command")]
 #[rustfmt::skip]
 pub enum Response {  
+    #[serde(rename = "API_version")]      APIVersionResponse { version: [u8; 3] },
     #[serde(rename = "register")]         RegisterResponse { uuid: i64 },
     #[serde(rename = "login")]            LoginResponse { uuid: i64 },
     #[serde(rename = "get_metadata")]     GetMetadataResponse { data: Vec<User> },
@@ -168,7 +175,8 @@ pub enum Response {
     #[serde(rename = "list_groups")]      ListGroupsResponse { data: Vec<Group> },
     #[serde(rename = "create_channel")]   CreateChannelResponse { uuid: Uuid },
 
-    #[serde(rename = "get_last_reads")]   GetLastReadsResponse { last_reads: HashMap<Uuid, Uuid> },
+    #[serde(rename = "get_last_reads")]   GetLastReadsResponse { last_reads: HashMap<Uuid, i64> },
+    #[serde(rename = "get_num_unread")]   GetNumUnreadResponse { num: u32 },
 
     #[serde(rename = "content")]
     ContentResponse {
@@ -330,13 +338,25 @@ impl Request for GetLastReadsRequest {
     }
 }
 
+impl Request for GetNumUnreadRequest {
+    fn execute(self, state_lock: &mut LockedState, peer: &mut Peer) -> Result<Response, CmdError> {
+        let Some(user_uuid) = peer.uuid else {
+            return Ok(GenericResponse(Status::Unauthenticated));
+        };
+
+        let num = state_lock.get_num_unread_messages(user_uuid, self.channel)?;
+
+        Ok(GetNumUnreadResponse { num })
+    }
+}
+
 impl Request for MarkUnreadRequest {
     fn execute(self, state_lock: &mut LockedState, peer: &mut Peer) -> Result<Response, CmdError> {
         let Some(user_uuid) = peer.uuid else {
             return Ok(GenericResponse(Status::Unauthenticated));
         };
 
-        let Some(message) = state_lock.get_message(self.id)? else {
+        let Some(message) = state_lock.get_message(self.uuid)? else {
             return Ok(GenericResponse(Status::NotFound));
         };
 
