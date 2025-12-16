@@ -70,7 +70,7 @@ pub struct UpdateUserGroupsRequest {
 pub struct GetLastReadsRequest;
 
 #[derive(Deserialize)]
-pub struct MarkUnreadRequest {
+pub struct MarkAsReadRequest {
     uuid: Uuid,
 }
 
@@ -148,7 +148,7 @@ pub enum Requests {
     #[serde(rename = "list_groups")]      ListGroupsRequest,
 
     #[serde(rename = "get_last_reads")]   GetLastReadsRequest,
-    #[serde(rename = "mark_unread")]      MarkUnreadRequest,
+    #[serde(rename = "mark_as_read")]     MarkAsReadRequest,
     #[serde(rename = "get_num_unread")]   GetNumUnreadRequest,
 }
 
@@ -350,12 +350,13 @@ impl Request for GetNumUnreadRequest {
     }
 }
 
-impl Request for MarkUnreadRequest {
+impl Request for MarkAsReadRequest {
     fn execute(self, state_lock: &mut LockedState, peer: &mut Peer) -> Result<Response, CmdError> {
         let Some(user_uuid) = peer.uuid else {
             return Ok(GenericResponse(Status::Unauthenticated));
         };
 
+        // TODO this can be elided
         let Some(message) = state_lock.get_message(self.uuid)? else {
             return Ok(GenericResponse(Status::NotFound));
         };

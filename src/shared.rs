@@ -847,7 +847,7 @@ impl Shared {
     pub fn insert_user_groups(&self, user: &User) -> Result<(), DbError> {
         let mut insert_group = self
             .conn
-            .prepare("insert into user_groups values (?1, ?2)")?;
+            .prepare("insert into user_groups (user_uuid, group_uuid) values (?1, ?2)")?;
         for g in &user.groups {
             insert_group.execute([user.uuid, *g])?;
         }

@@ -285,6 +285,10 @@ impl Request for SendRequest {
         // TODO test!!!
         // also stoopid
         for (tx, _, uuid) in state_lock.peers.iter() {
+            // Ignore users who are logged out. They cannot receive messages!
+            if uuid.is_none() {
+                continue;
+            }
             let perms = channel_perms(state_lock, *uuid, &channel)?;
             if perms.read_messages == Perm::Allow {
                 tx.send(msg_json.clone())?;
