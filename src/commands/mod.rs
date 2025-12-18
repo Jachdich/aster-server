@@ -71,7 +71,7 @@ pub struct GetLastReadsRequest;
 
 #[derive(Deserialize)]
 pub struct MarkAsReadRequest {
-    uuid: Uuid,
+    message: Uuid,
 }
 
 #[derive(Deserialize)]
@@ -357,7 +357,7 @@ impl Request for MarkAsReadRequest {
         };
 
         // TODO this can be elided
-        let Some(message) = state_lock.get_message(self.uuid)? else {
+        let Some(message) = state_lock.get_message(self.message)? else {
             return Ok(GenericResponse(Status::NotFound));
         };
 
@@ -687,6 +687,7 @@ pub fn process_command(
             let command = if raw_request["command"].is_string() {
                 raw_request["command"].as_str().unwrap().to_owned()
             } else {
+                log::warn!("Command field missing: '{msg}'");
                 "unknown".to_owned()
             };
             print!("Request {command}");
@@ -694,18 +695,21 @@ pub fn process_command(
             match serde_json::from_value::<Requests>(raw_request) {
                 Ok(request) => execute_request(request, state, peer, &command),
                 Err(_) => {
+                    log::warn!("Bad request for command: '{msg}'");
                     json!({"command": command, "status": Status::BadRequest as i32})
                 }
             }
         }
         Err(_) => {
+            log::warn!("Unreadable json message: '{msg}'");
             json!({"command": "unknown", "status": Status::BadRequest as i32})
         }
     };
     // println!("Got request '{}' and responded with '{:?}'", msg, response);
+    let status: i64 = response["status"].as_i64().unwrap();
     peer.tx.send(response)?;
     let d = a.elapsed();
-    println!(" took {}µs to respond", d.as_micros());
+    println!(" took {}µs to respond with code {}", d.as_micros(), status);
     Ok(())
 }
 
