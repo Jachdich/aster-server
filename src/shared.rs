@@ -112,7 +112,8 @@ CREATE TABLE last_read_messages (
     channel_uuid BigInt NOT NULL,
     date integer NOT NULL,
     FOREIGN KEY (user_uuid) REFERENCES users(uuid),
-    FOREIGN KEY (channel_uuid) REFERENCES channels(uuid)
+    FOREIGN KEY (channel_uuid) REFERENCES channels(uuid),
+    PRIMARY KEY (user_uuid, channel_uuid)
 );
 
 COMMIT;"#,
@@ -263,7 +264,8 @@ const MIGRATIONS: &[Migration] = &[
                 channel_uuid BigInt NOT NULL,
                 date integer NOT NULL,
                 FOREIGN KEY (user_uuid) REFERENCES users(uuid),
-                FOREIGN KEY (channel_uuid) REFERENCES channels(uuid)
+                FOREIGN KEY (channel_uuid) REFERENCES channels(uuid),
+                PRIMARY KEY (user_uuid, channel_uuid)
             );
             commit;
         "#,
@@ -465,10 +467,14 @@ impl Shared {
     /// Returns `Err(_)` if the database operation failed.
     /// Returns an empty map if the user's UUID does not exist, or there is no
     /// read message information for that user.
-    pub fn get_last_read_messages(&self, user: Uuid) -> Result<HashMap<Uuid, i64>, DbError> {
-        let mut map = HashMap::<Uuid, Uuid>::new();
+    pub fn get_last_read_messages(&self, user: Uuid) -> Result<HashMap<Uuid, (i64, u32)>, DbError> {
+        let mut map = HashMap::<Uuid, (i64, u32)>::new();
 
-        for (channel, message) in self
+        // let mut any_unread_q = self.conn.prepare(
+        //     "SELECT date FROM messages WHERE channel_uuid = ?1 ORDER BY rowid DESC LIMIT 1",
+        // )?;
+
+        for (channel, date) in self
             .conn
             .prepare("SELECT channel_uuid, date FROM last_read_messages WHERE user_uuid = ?1")?
             .query_map([user], |row| {
@@ -476,7 +482,12 @@ impl Shared {
             })?
             .collect::<Result<Vec<_>, _>>()?
         {
-            map.insert(channel, message);
+            // let last_message_date: i64 = any_unread_q.query_row([channel], |row| row.get(0))?;
+            // let any_unread = last_message_date > date;
+            map.insert(
+                channel,
+                (date, self.get_num_unread_messages(user, channel)?),
+            );
         }
         Ok(map)
     }
@@ -495,7 +506,7 @@ impl Shared {
             .prepare("select date from messages where uuid=?1")?
             .query_row([message], |row| row.get(0))?;
         self.conn
-            .prepare("INSERT INTO last_read_messages VALUES (?1, ?2, ?3)")?
+            .prepare("INSERT or replace INTO last_read_messages VALUES (?1, ?2, ?3)")?
             .execute([user, channel, date])
     }
 
@@ -510,7 +521,7 @@ impl Shared {
         let Some(last_read_date) = self
             .conn
             .prepare(
-                "SELECT date FROM last_read_messages WHERE user_uid = ?1 AND channel_uuid = ?2",
+                "SELECT date FROM last_read_messages WHERE user_uuid = ?1 AND channel_uuid = ?2",
             )?
             .query_row([user, channel], |row| row.get(0))
             .optional()?

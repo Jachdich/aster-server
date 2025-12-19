@@ -175,7 +175,7 @@ pub enum Response {
     #[serde(rename = "list_groups")]      ListGroupsResponse { data: Vec<Group> },
     #[serde(rename = "create_channel")]   CreateChannelResponse { uuid: Uuid },
 
-    #[serde(rename = "get_last_reads")]   GetLastReadsResponse { last_reads: HashMap<Uuid, i64> },
+    #[serde(rename = "get_last_reads")]   GetLastReadsResponse { last_reads: HashMap<Uuid, (i64, u32)> },
     #[serde(rename = "get_num_unread")]   GetNumUnreadResponse { num: u32 },
 
     #[serde(rename = "content")]
