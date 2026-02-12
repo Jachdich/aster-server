@@ -102,7 +102,7 @@ CREATE TABLE channel_group_permissions (
     channel_uuid BigInt NOT NULL,
     user_uuid BigInt,
     group_uuid BigInt,
-    permissions TODO TODO NOT NULL,
+    permissions blob NOT NULL,
     FOREIGN KEY (user_uuid) REFERENCES users(uuid),
     FOREIGN KEY (group_uuid) REFERENCES groups(uuid)
 );

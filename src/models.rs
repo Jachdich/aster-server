@@ -11,6 +11,7 @@ pub struct Channel {
     pub uuid: i64,
     pub name: String,
     pub position: usize,
+    #[serde(skip)] // TODOOOOOOOOOO TODO TODO TODO
     pub permissions: HashMap<PermableEntity, Permissions>,
 }
 

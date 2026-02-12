@@ -43,7 +43,7 @@ pub struct CreateGroupRequest {
     pub permissions: Permissions,
     pub name: String,
     pub colour: i32,
-    pub position: usize,
+    pub position: Option<usize>,
 }
 
 #[derive(Deserialize)]
@@ -117,27 +117,28 @@ pub struct GetNumUnreadRequest {
 pub enum Requests {
     #[serde(rename = "register")]         RegisterRequest,
     #[serde(rename = "login")]            LoginRequest,
+    #[serde(rename = "change_password")]  PasswordChangeRequest,
     #[serde(rename = "ping")]             PingRequest,
+    #[serde(rename = "leave")]            LeaveRequest,
     #[serde(rename = "nick")]             NickRequest,
     #[serde(rename = "online")]           OnlineRequest,
     #[serde(rename = "send")]             SendRequest,
+    #[serde(rename = "edit")]             EditRequest,
+    #[serde(rename = "delete")]           DeleteRequest,
+    #[serde(rename = "history")]          HistoryRequest,
     #[serde(rename = "get_metadata")]     GetMetadataRequest,
     #[serde(rename = "get_name")]         GetNameRequest,
     #[serde(rename = "get_icon")]         GetIconRequest,
     #[serde(rename = "list_emoji")]       ListEmojiRequest,
     #[serde(rename = "get_emoji")]        GetEmojiRequest,
-    #[serde(rename = "list_channels")]    ListChannelsRequest,
-    #[serde(rename = "history")]          HistoryRequest,
     #[serde(rename = "pfp")]              PfpRequest,
     #[serde(rename = "sync_set")]         SyncSetRequest,
     #[serde(rename = "sync_get")]         SyncGetRequest,
     #[serde(rename = "sync_set_servers")] SyncSetServersRequest,
     #[serde(rename = "sync_get_servers")] SyncGetServersRequest,
-    #[serde(rename = "leave")]            LeaveRequest,
     #[serde(rename = "get_user")]         GetUserRequest,
-    #[serde(rename = "edit")]             EditRequest,
-    #[serde(rename = "delete")]           DeleteRequest,
-    #[serde(rename = "change_password")]  PasswordChangeRequest,
+    #[serde(rename = "list_channels")]    ListChannelsRequest,
+    #[serde(rename = "list_groups")]      ListGroupsRequest,
     #[serde(rename = "create_channel")]   CreateChannelRequest,
     #[serde(rename = "delete_channel")]   DeleteChannelRequest,
     #[serde(rename = "update_channel")]   UpdateChannelRequest,
@@ -145,7 +146,6 @@ pub enum Requests {
     #[serde(rename = "delete_group")]     DeleteGroupRequest,
     #[serde(rename = "update_group")]     UpdateGroupRequest,
     #[serde(rename = "update_user_groups")] UpdateUserGroupsRequest,
-    #[serde(rename = "list_groups")]      ListGroupsRequest,
 
     #[serde(rename = "get_last_reads")]   GetLastReadsRequest,
     #[serde(rename = "mark_as_read")]     MarkAsReadRequest,
@@ -406,18 +406,20 @@ impl Request for CreateGroupRequest {
             return Ok(GenericResponse(Status::Forbidden));
         }
 
+        let groups = state_lock.get_groups()?;
+
+        // TODO could this just be a last() cos they are in the right order
+        let next_position = groups.iter().map(|g| g.position + 1).max().unwrap_or(0);
+        let position = self.position.unwrap_or(next_position);
+
         // forbid altering higher groups
         let highest_role = state_lock.get_highest_group_pos_of(peer.uuid.unwrap())?;
-        if self.position <= highest_role {
+        if position <= highest_role {
             return Ok(GenericResponse(Status::Forbidden));
         }
 
-        let groups = state_lock.get_groups()?;
-
         // Cannot add a group (too far) past the end of existing groups
-        // TODO could this just be a last() cos they are in the right order
-        let next_position = groups.iter().map(|g| g.position + 1).max().unwrap_or(0);
-        if self.position > next_position {
+        if position > next_position {
             return Ok(GenericResponse(Status::BadRequest));
         }
 
@@ -429,7 +431,7 @@ impl Request for CreateGroupRequest {
             position: next_position,
         })?;
 
-        moveto(next_position, self.position, groups, |g| {
+        moveto(next_position, position, groups, |g| {
             state_lock.update_group(&g)
         })?;
 
@@ -705,7 +707,10 @@ pub fn process_command(
             json!({"command": "unknown", "status": Status::BadRequest as i32})
         }
     };
-    // println!("Got request '{}' and responded with '{:?}'", msg, response);
+    println!(
+        "Got request '{}'\n and responded with '{:?}'\n\n",
+        msg, response
+    );
     let status: i64 = response["status"].as_i64().unwrap();
     peer.tx.send(response)?;
     let d = a.elapsed();
