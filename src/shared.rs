@@ -561,9 +561,9 @@ impl Shared {
             .query_row([group_uuid], |row| {
                 Ok(Group {
                     uuid: row.get(0)?,
-                    permissions: row.get::<usize, Vec<u8>>(1)?.as_slice().into(),
-                    name: row.get(2)?,
-                    colour: row.get(3)?,
+                    name: row.get(1)?,
+                    colour: row.get(2)?,
+                    permissions: row.get::<usize, Vec<u8>>(3)?.as_slice().into(),
                     position: row.get(4)?,
                 })
             })
