@@ -10,7 +10,11 @@ edition = "2018"
 tokio = { version = "1.0.0", features = ["rt-multi-thread", "macros"] }
 tokio-util = { version = "0.6.3", features = ["full"] }
 tokio-stream = { version = "0.1" }
-tokio-tungstenite = "*"
+# tokio-tungstenite = "*"
+hyper = { version = "*", features = ["server", "http1"] }
+hyper-util = { version = "*", features = ["server", "http1"] }
+http-body-util = "*"
+hyper-tungstenite = "*"
 tokio-native-tls = "*"
 native-tls = "0.2.11"
 bytes = "1.0.0"

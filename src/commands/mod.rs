@@ -18,7 +18,6 @@ use enum_dispatch::enum_dispatch;
 use serde::{Deserialize, Serialize, Serializer};
 use serde_json::json;
 use std::collections::HashMap;
-use std::error::Error;
 
 #[derive(Clone, Copy, Debug)]
 pub enum Status {
@@ -682,7 +681,7 @@ pub fn process_command(
     msg: &str,
     state: &mut LockedState,
     peer: &mut Peer,
-) -> Result<(), Box<dyn Error>> {
+) -> Result<(), anyhow::Error> {
     let a = std::time::Instant::now();
     let response = match serde_json::from_str::<JsonValue>(msg) {
         Ok(raw_request) => {
@@ -707,10 +706,10 @@ pub fn process_command(
             json!({"command": "unknown", "status": Status::BadRequest as i32})
         }
     };
-    println!(
-        "Got request '{}'\n and responded with '{:?}'\n\n",
-        msg, response
-    );
+    // println!(
+    //     "Got request '{}'\n and responded with '{:?}'\n\n",
+    //     msg, response
+    // );
     let status: i64 = response["status"].as_i64().unwrap();
     peer.tx.send(response)?;
     let d = a.elapsed();
